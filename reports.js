@@ -134,6 +134,7 @@ function drawReport(data) {
         ${units.length ? `<label>${esc(fl)} <select id="fUnit"><option value="">All</option>${units.map(u => `<option ${rp.filters[fk] === u ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></label>` : ''}
         ${Object.values(rp.filters).some(v => v != null) ? '<button class="link" id="fClear" type="button">Clear filters</button>' : ''}
         <span class="updated">Last updated ${rp.lastUpdated ? fmtDate(rp.lastUpdated) : '–'}</span>
+        ${downloadMenuHtml()}
       </div>
     </header>
     <p class="compare">${esc(periodLabel(rp.period))} compared with ${esc(periodLabel(cmp))}${def.note ? ' · ' + def.note : ''}</p>
@@ -147,6 +148,7 @@ function drawReport(data) {
   if ($('fUnit')) $('fUnit').onchange = e => setFilter(fk, e.target.value || null, true);
   if ($('fClear')) $('fClear').onclick = () => { rp.filters = {}; drawReport(data); };
   document.querySelectorAll('[data-clear]').forEach(b => b.onclick = () => setFilter(b.dataset.clear, null, true));
+  wireDownloadMenu();
 
   def.draw(data, { period: rp.period, compare: cmp, filters: rp.filters });
   if (rp.details) drawDetails();

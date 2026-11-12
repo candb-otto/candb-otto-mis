@@ -169,6 +169,40 @@ tfoot tr.total td { border-bottom: 0; }
   .rep-body .tile .s { font-size: 11px; }
 }
 
+/* ---------- Download menu, busy overlay ---------- */
+.dl { position: relative; }
+.dl-btn { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.dl-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.dl-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; min-width: 250px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(11, 32, 20, .14); padding: 6px; }
+.dl-group { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 8px 10px 4px; }
+.dl-menu button { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; width: 100%; border: 0; background: none; padding: 8px 10px; border-radius: 6px; cursor: pointer; text-align: left; color: var(--ink); font-size: 13px; font-weight: 600; }
+.dl-menu button small { font-weight: 400; color: var(--muted); font-size: 11.5px; }
+.dl-menu button:hover, .dl-menu button:focus-visible { background: var(--brand-soft); outline: 0; }
+@media (max-width: 860px) { .dl-menu { right: auto; left: 0; max-width: calc(100vw - 90px); } }
+.dl-busy { position: fixed; inset: 0; z-index: 100; background: rgba(250, 250, 250, .82); display: grid; place-items: center; }
+.dl-busy-box { display: flex; align-items: center; gap: 12px; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; box-shadow: 0 10px 28px rgba(11, 32, 20, .12); font-weight: 600; }
+.spinner { width: 18px; height: 18px; border-radius: 50%; border: 3px solid var(--band); border-top-color: var(--brand); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- PDF layout (built off-screen, A4 landscape) ---------- */
+.pdf-wrap { position: fixed; left: 0; top: 0; z-index: -1; pointer-events: none; }
+.pdf-root { width: 1120px; background: #fff; color: var(--ink); font: 13px/1.4 var(--font); padding: 4px 8px; }
+.pdf-report.pdf-break { page-break-before: always; break-before: page; }
+.pdf-root .masthead { margin-bottom: 0; }
+.pdf-root .report-title { margin: 10px 0 8px; }
+.pdf-root header { margin-bottom: 4px; }
+.pdf-root .pdf-upd { margin-left: auto; font-size: 12px; color: var(--muted); }
+.pdf-root .compare { margin: 2px 0 10px; }
+.pdf-tiles { grid-template-columns: repeat(5, 1fr); }
+.pdf-root .tile .v { font-size: 22px; }
+.pdf-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pdf-chart { padding: 8px 10px; margin-bottom: 10px; break-inside: avoid; }
+.pdf-chart-img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+.pdf-chart .chart-title { font-size: 13px; margin-bottom: 4px; }
+.pdf-summary table { font-size: 12px; }
+.pdf-summary th, .pdf-summary td { padding: 5px 7px; }
+.pdf-foot { font-size: 10.5px; color: var(--muted); text-align: right; margin: 6px 0 0; }
+
 /* ---------- Upload page ---------- */
 .dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center;
   padding: 28px 16px; margin-bottom: 16px; background: #fff; border: 2px dashed var(--line); border-radius: 10px; cursor: pointer; transition: border-color .15s, background .15s; }

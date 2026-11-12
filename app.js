@@ -231,7 +231,7 @@ function drawActivity() {
 const ACTIONS = {
   login: 'Logged in', logout: 'Logged out', login_failed: 'Login failed', change_password: 'Changed password',
   user_created: 'Added user', password_reset: 'Reset password', user_activated: 'Switched on user', user_deactivated: 'Switched off user',
-  upload: 'Uploaded data', upload_rejected: 'Upload rejected',
+  upload: 'Uploaded data', upload_rejected: 'Upload rejected', download: 'Downloaded',
 };
 
 $('userSearch').addEventListener('input', () => { state.userPage = 1; drawUsers(); });

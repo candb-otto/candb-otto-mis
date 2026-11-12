@@ -97,7 +97,10 @@ const Charts = (() => {
     wireTable(table, items, opts);
     if (!items.length) { area.innerHTML = '<p class="empty">No data for this selection.</p>'; return; }
     const W = Math.max(260, area.clientWidth || host.clientWidth || 400);
-    const rowH = 26, gap = 2, top = 4, labelW = Math.min(150, Math.max(90, W * 0.32)), valueW = 64;
+    // Label space fits the longest name (up to 42% of the width); longer names are shortened with "…"
+    const longest = Math.max(...items.map(d => String(d.label).length));
+    const rowH = 26, gap = 2, top = 4, valueW = 64, CH = 6.8;
+    const labelW = Math.round(Math.min(W * 0.42, Math.max(70, longest * CH + 14)));
     const H = top + items.length * (rowH + gap) + 18;
     const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: 'viz-svg', role: 'img', 'aria-label': opts.title });
     const max = niceMax(Math.max(...items.map(d => d.value || 0)));
@@ -113,7 +116,8 @@ const Charts = (() => {
       const dim = opts.selected != null && opts.selected !== d.key;
       el('rect', { x: 0, y, width: W, height: rowH, class: 'viz-hit', fill: 'transparent' }, g);
       const label = el('text', { x: x0 - 8, y: y + rowH / 2 + 4, 'text-anchor': 'end', class: 'viz-cat' + (dim ? ' dim' : '') }, g);
-      label.textContent = truncate(d.label, Math.floor(labelW / 7));
+      label.textContent = truncate(d.label, Math.floor((labelW - 12) / CH));
+      if (String(d.label) !== label.textContent) el('title', {}, label).textContent = d.label;
       const w = plotW * (d.value || 0) / max;
       el('path', { d: barPath(x0, y + 5, Math.max(w, d.value ? 1.5 : 0), rowH - 10, true), class: 'viz-mark' + (dim ? ' dim' : ''), fill: 'var(--s1)' }, g);
       el('text', { x: x0 + w + 6, y: y + rowH / 2 + 4, class: 'viz-val' + (dim ? ' dim' : '') }, g).textContent = compact(d.value || 0);
