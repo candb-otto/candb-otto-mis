@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MIS Master System</title>
+  <link rel="icon" href="img/otto-logo.png">
+  <link rel="stylesheet" href="cb-theme.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body class="logged-out">
+
+  <nav id="sidebar" class="collapsed" aria-label="Main menu">
+    <button id="toggle" class="nav-btn" title="Show / hide menu" aria-label="Show or hide menu">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>Menu</span>
+    </button>
+    <button class="nav-btn" data-route="home" title="Home">
+      <svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span>
+    </button>
+    <button class="nav-btn" data-route="users" data-role="admin" title="Users">
+      <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11a3 3 0 1 0 0-6M22 21c0-3-2-5-5-5.5"/></svg><span>Users</span>
+    </button>
+    <button class="nav-btn" data-route="password" title="Change password">
+      <svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Change password</span>
+    </button>
+    <button class="nav-btn" id="logoutBtn" title="Log out">
+      <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg><span>Log out</span>
+    </button>
+  </nav>
+
+  <main>
+    <div class="masthead">
+      <img class="logo-l" src="img/otto-logo.png" alt="OTTO">
+      <p class="company">Otto Clothing Pvt Ltd</p>
+      <img class="logo-r" src="img/cb-logo.jpg" alt="C&amp;B Consulting &amp; Beyond">
+    </div>
+    <h1 class="report-title" id="pageTitle">MIS Master System</h1>
+    <div class="topbar hidden" id="topbar">
+      <span id="whoami"></span>
+    </div>
+    <div class="status" id="status" role="status"></div>
+
+    <!-- Login -->
+    <section class="view" id="view-login">
+      <form class="card auth-card" id="loginForm" autocomplete="on">
+        <h2>Log in</h2>
+        <label class="field">Login ID
+          <input id="loginId" name="username" autocomplete="username" required autofocus>
+        </label>
+        <label class="field">Password
+          <span class="pw-wrap">
+            <input id="loginPw" name="password" type="password" autocomplete="current-password" required>
+            <button type="button" class="link show-pw" data-for="loginPw">Show</button>
+          </span>
+        </label>
+        <button class="btn primary wide" type="submit" id="loginBtn">Log in</button>
+        <p class="note small">Forgot your password? Ask the MIS admin to reset it.</p>
+      </form>
+    </section>
+
+    <!-- Change password -->
+    <section class="view hidden" id="view-password">
+      <form class="card auth-card" id="pwForm" autocomplete="off">
+        <h2>Change password</h2>
+        <p class="note" id="pwIntro">Choose a new password.</p>
+        <label class="field">Current password
+          <span class="pw-wrap">
+            <input id="pwCurrent" type="password" autocomplete="current-password" required>
+            <button type="button" class="link show-pw" data-for="pwCurrent">Show</button>
+          </span>
+        </label>
+        <label class="field">New password
+          <span class="pw-wrap">
+            <input id="pwNew" type="password" autocomplete="new-password" required minlength="8">
+            <button type="button" class="link show-pw" data-for="pwNew">Show</button>
+          </span>
+        </label>
+        <label class="field">Type the new password again
+          <input id="pwNew2" type="password" autocomplete="new-password" required minlength="8">
+        </label>
+        <p class="note small">At least 8 characters, with letters and numbers.</p>
+        <button class="btn primary wide" type="submit" id="pwBtn">Save new password</button>
+      </form>
+    </section>
+
+    <!-- Home (module tiles come in Phase 1b) -->
+    <section class="view hidden" id="view-home">
+      <header><div class="filters"><label>Welcome,</label><span id="homeName"></span></div></header>
+      <p class="compare">You are logged in. The module tiles will appear here in Phase 1b.</p>
+    </section>
+
+    <!-- Users (admin) -->
+    <section class="view hidden" id="view-users">
+      <div class="sec-title">Add a user <small>A temporary password is made for them</small></div>
+      <form class="filters inline" id="addUserForm" autocomplete="off">
+        <label>Full name<input id="newName" required maxlength="60"></label>
+        <label>Login ID<input id="newLogin" required pattern="[A-Za-z0-9._\-]{3,30}" maxlength="30" placeholder="e.g. ravi.k"></label>
+        <button class="btn primary" type="submit">Add user</button>
+      </form>
+      <div class="temp-box hidden" id="tempBox"></div>
+
+      <div class="sec-title">Users <small id="userCount"></small></div>
+      <div class="tbl-tools">
+        <input id="userSearch" class="grow" placeholder="Search name or login ID">
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Login ID</th><th>Role</th><th>Status</th><th>Last login</th><th>Actions</th></tr></thead>
+          <tbody id="userRows"></tbody>
+        </table>
+      </div>
+      <div class="pager" id="userPager"></div>
+
+      <div class="sec-title">Recent activity <small>Last 200 events</small></div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>When</th><th>User</th><th>Action</th><th>Detail</th></tr></thead>
+          <tbody id="activityRows"></tbody>
+        </table>
+      </div>
+      <div class="pager" id="activityPager"></div>
+    </section>
+
+    <footer class="foot">MIS Master System · Otto Clothing Pvt Ltd · C&amp;B Consulting &amp; Beyond</footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
