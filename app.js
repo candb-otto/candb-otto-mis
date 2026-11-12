@@ -65,7 +65,7 @@ function render() {
   document.title = authMode ? 'Log in · MIS Master System' : 'MIS Master System';
   if (authMode) { setTimeout(() => (u ? $('fpCurrent') : $('loginId')).focus(), 0); return; }
 
-  let [route, param] = currentRoute().split('/');
+  let [route, param, sub] = currentRoute().split('/');
   if (!TITLES[route] || (route === 'module' && !param)) route = 'home';
   if (ADMIN_ROUTES.includes(route) && u.role !== 'admin') route = 'home';
 
@@ -81,7 +81,7 @@ function render() {
   $('avatar').textContent = initials(u.name);
 
   if (route === 'home') loadHome();
-  if (route === 'module') loadModule(param);
+  if (route === 'module') loadModule(param, sub);
   if (route === 'users') loadUsers();
   if (route === 'upload') loadUploadPage();
 }
@@ -341,25 +341,6 @@ $('modGrid').addEventListener('keydown', e => {
   if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go('module/' + t.dataset.mod); }
 });
 document.querySelectorAll('[data-go]').forEach(a => a.addEventListener('click', () => go(a.dataset.go)));
-
-async function loadModule(key) {
-  try {
-    if (!state.modules) state.modules = (await api('/api/home')).modules;
-    const mod = state.modules.find(m => m.key === key);
-    if (!mod) return go('home');
-    $('pageTitle').textContent = mod.name;
-    document.title = mod.name + ' · MIS Master System';
-    $('modCrumb').textContent = mod.name;
-    const { reports } = await api('/api/data-status');
-    const rows = reports.filter(r => r.module === key);
-    const last = rows.map(r => r.lastMonth).filter(Boolean).sort().at(-1);
-    $('modData').textContent = last ? `up to ${fmtMonth(last)} · last updated ${mod.lastUpdated ? fmtDate(mod.lastUpdated) : '–'}` : 'no data uploaded yet';
-    $('modRows').innerHTML = rows.map(r => `<tr class="${r.enabled ? '' : 'muted-row'}"><td>${esc(r.label)}</td><td>${esc(r.sheet)}</td>
-      <td class="num">${r.rows ? fmtNum(r.rows) : '–'}</td>
-      <td>${r.firstMonth ? `${fmtMonth(r.firstMonth)} – ${fmtMonth(r.lastMonth)}` : `<span class="note">${esc(r.note || 'No data yet')}</span>`}</td>
-      <td>${r.lastUpdated ? fmtDate(r.lastUpdated) : '–'}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">No report data for this module yet.</td></tr>';
-  } catch (err) { say(err.message, 'error'); }
-}
 
 // ---------- upload page ----------
 const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
@@ -666,4 +647,4 @@ function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 window.addEventListener('hashchange', render);
-boot();
+window.addEventListener('DOMContentLoaded', boot);
