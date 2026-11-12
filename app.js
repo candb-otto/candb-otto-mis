@@ -48,7 +48,7 @@ function say(msg, kind) {
 }
 
 // ---------- routing ----------
-const TITLES = { password: 'Change Password', home: 'Home', upload: 'Upload Data', users: 'Users' };
+const TITLES = { password: 'Change Password', home: 'Home', module: 'Module', upload: 'Upload Data', users: 'Users' };
 const ADMIN_ROUTES = ['users', 'upload'];
 
 function go(route) { if (location.hash !== '#/' + route) location.hash = '#/' + route; else render(); }
@@ -65,13 +65,13 @@ function render() {
   document.title = authMode ? 'Log in · MIS Master System' : 'MIS Master System';
   if (authMode) { setTimeout(() => (u ? $('fpCurrent') : $('loginId')).focus(), 0); return; }
 
-  let route = currentRoute();
-  if (!TITLES[route]) route = 'home';
+  let [route, param] = currentRoute().split('/');
+  if (!TITLES[route] || (route === 'module' && !param)) route = 'home';
   if (ADMIN_ROUTES.includes(route) && u.role !== 'admin') route = 'home';
 
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + route));
   document.querySelectorAll('#sidebar [data-route]').forEach(b => {
-    b.classList.toggle('active', b.dataset.route === route);
+    b.classList.toggle('active', b.dataset.route === (route === 'module' ? 'home' : route));
     if (b.dataset.role) b.classList.toggle('hidden', u.role !== b.dataset.role);
   });
   $('pageTitle').textContent = TITLES[route];
@@ -80,7 +80,8 @@ function render() {
   $('userLogin').textContent = u.loginId;
   $('avatar').textContent = initials(u.name);
 
-  if (route === 'home') $('homeName').textContent = u.name;
+  if (route === 'home') loadHome();
+  if (route === 'module') loadModule(param);
   if (route === 'users') loadUsers();
   if (route === 'upload') loadUploadPage();
 }
@@ -275,6 +276,89 @@ function showTemp(name, loginId, pw) {
     This password is shown only once. <button class="link" type="button" id="tempHide">Hide</button></div>`;
   box.classList.remove('hidden');
   $('tempHide').onclick = () => { box.classList.add('hidden'); box.innerHTML = ''; };
+}
+
+// ---------- home page ----------
+const MOD_ICONS = {
+  production: '<path d="M20.4 7.4 16 3.5a1 1 0 0 0-.7-.3H14a2 2 0 0 1-4 0H8.7a1 1 0 0 0-.7.3L3.6 7.4a1 1 0 0 0 0 1.4l2 2a1 1 0 0 0 1.4 0L8 10v10a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V10l1 .8a1 1 0 0 0 1.4 0l2-2a1 1 0 0 0 0-1.4z"/>',
+  hr: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11a3 3 0 1 0 0-6M22 21c0-3-2-5-5-5.5"/>',
+  admin: '<path d="M3 16V6a1 1 0 0 1 1-1h10v11M14 9h4l3 3v4h-7"/><circle cx="7" cy="17.5" r="2"/><circle cx="17" cy="17.5" r="2"/>',
+  orders: '<path d="M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/><path d="m8.5 10.5 2 1.2"/>',
+  inventory: '<path d="M3 21V8l9-5 9 5v13M7 21v-8h10v8M7 17h10"/>',
+  costing: '<path d="M7 4h10M7 8h10M14 8c0 3-2.5 4.5-6 4.5h-1l8 7.5M7 4c3.5 0 6.5 1 7 4"/>',
+  sales: '<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 6-6M15 8h5v5"/>',
+};
+
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+}
+
+async function loadHome() {
+  $('greet').textContent = `${greeting()}, ${state.user.name}`;
+  $('homeSub').textContent = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  if (!$('modGrid').children.length) $('modGrid').innerHTML = '<p class="note">Loading…</p>';
+  try {
+    const { modules } = await api('/api/home');
+    state.modules = modules;
+    drawHome(modules);
+  } catch (err) { say(err.message, 'error'); }
+}
+
+function kpiHtml(k) {
+  if (k.value == null) return `<div class="kpi"><div class="k">${esc(k.label)}</div><div class="v">–</div><div class="d">No data yet</div></div>`;
+  let delta = '<span>No previous month</span>';
+  if (k.prev) {
+    const pct = (k.value - k.prev) / k.prev * 100;
+    const up = pct >= 0;
+    delta = `<b class="${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${up ? '+' : ''}${pct.toFixed(1)}%</b> vs ${fmtMonth(k.prevMonth)} (${fmtNum(Math.round(k.prev))})`;
+  }
+  return `<div class="kpi"><div class="k">${esc(k.label)} · ${fmtMonth(k.month)}</div>
+    <div class="v">${fmtNum(Math.round(k.value))}</div><div class="d">${delta}</div></div>`;
+}
+
+function drawHome(modules) {
+  const months = modules.flatMap(m => m.kpis.map(k => k.month)).filter(Boolean).sort();
+  if (months.length) $('homeSub').textContent += ` · Data up to ${fmtMonth(months.at(-1))}`;
+  $('modGrid').innerHTML = modules.map(m => {
+    const icon = `<span class="mod-icon"><svg viewBox="0 0 24 24">${MOD_ICONS[m.key] || ''}</svg></span>`;
+    if (!m.live) {
+      return `<div class="mod soon">
+        <div class="mod-top">${icon}<div><p class="mod-name">${esc(m.name)}</p><p class="mod-desc">${esc(m.desc)}</p></div></div>
+        <div class="mod-reports">${m.reports.map(r => `<span>${esc(r)}</span>`).join('')}</div>
+        <div class="mod-foot"><span>${m.reports.length} reports</span><span class="pill muted">Coming soon</span></div></div>`;
+    }
+    return `<div class="mod live" role="link" tabindex="0" data-mod="${esc(m.key)}" aria-label="Open ${esc(m.name)}">
+      <div class="mod-top">${icon}<div><p class="mod-name">${esc(m.name)}</p><p class="mod-desc">${esc(m.desc)}</p></div><span class="pill good">Live</span></div>
+      ${m.kpis.length ? `<div class="mod-kpis">${m.kpis.map(kpiHtml).join('')}</div>` : ''}
+      <div class="mod-foot"><span>${m.lastUpdated ? `Last updated ${fmtDate(m.lastUpdated)}` : 'No data uploaded yet'}</span><span class="open">Open ${esc(m.name)} →</span></div></div>`;
+  }).join('');
+}
+
+$('modGrid').addEventListener('click', e => { const t = e.target.closest('[data-mod]'); if (t) go('module/' + t.dataset.mod); });
+$('modGrid').addEventListener('keydown', e => {
+  const t = e.target.closest('[data-mod]');
+  if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go('module/' + t.dataset.mod); }
+});
+document.querySelectorAll('[data-go]').forEach(a => a.addEventListener('click', () => go(a.dataset.go)));
+
+async function loadModule(key) {
+  try {
+    if (!state.modules) state.modules = (await api('/api/home')).modules;
+    const mod = state.modules.find(m => m.key === key);
+    if (!mod) return go('home');
+    $('pageTitle').textContent = mod.name;
+    document.title = mod.name + ' · MIS Master System';
+    $('modCrumb').textContent = mod.name;
+    const { reports } = await api('/api/data-status');
+    const rows = reports.filter(r => r.module === key);
+    const last = rows.map(r => r.lastMonth).filter(Boolean).sort().at(-1);
+    $('modData').textContent = last ? `up to ${fmtMonth(last)} · last updated ${mod.lastUpdated ? fmtDate(mod.lastUpdated) : '–'}` : 'no data uploaded yet';
+    $('modRows').innerHTML = rows.map(r => `<tr class="${r.enabled ? '' : 'muted-row'}"><td>${esc(r.label)}</td><td>${esc(r.sheet)}</td>
+      <td class="num">${r.rows ? fmtNum(r.rows) : '–'}</td>
+      <td>${r.firstMonth ? `${fmtMonth(r.firstMonth)} – ${fmtMonth(r.lastMonth)}` : `<span class="note">${esc(r.note || 'No data yet')}</span>`}</td>
+      <td>${r.lastUpdated ? fmtDate(r.lastUpdated) : '–'}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">No report data for this module yet.</td></tr>';
+  } catch (err) { say(err.message, 'error'); }
 }
 
 // ---------- upload page ----------

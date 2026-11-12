@@ -116,10 +116,28 @@
         <h1 class="page-title" id="pageTitle">Home</h1>
         <div class="status" id="status" role="status"></div>
 
-        <!-- Home (module tiles come in Phase 1b) -->
+        <!-- Home: one tile per module -->
         <section class="view" id="view-home">
-          <header><div class="filters"><label>Welcome,</label><span id="homeName"></span></div></header>
-          <p class="compare">The module tiles will appear here in Phase 1b.</p>
+          <div class="home-head">
+            <div>
+              <p class="greet" id="greet"></p>
+              <p class="note" id="homeSub"></p>
+            </div>
+          </div>
+          <div class="mod-grid" id="modGrid"></div>
+        </section>
+
+        <!-- Module page (reports arrive in Phase 1d) -->
+        <section class="view hidden" id="view-module">
+          <div class="crumbs"><a data-go="home">Home</a> › <span id="modCrumb"></span></div>
+          <header><div class="filters"><label>Data:</label><span id="modData"></span></div></header>
+          <p class="compare">The reports for this module arrive in Phase 1d. Below is the data each report will use.</p>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr><th>Report data</th><th>Excel sheet</th><th class="num">Rows</th><th>Months covered</th><th>Last updated</th></tr></thead>
+              <tbody id="modRows"></tbody>
+            </table>
+          </div>
         </section>
 
         <!-- Change password (when already logged in) -->
