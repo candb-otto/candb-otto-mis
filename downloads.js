@@ -166,7 +166,7 @@ function detailSheet(X, src, raw) {
   const cols = raw.columns;
   const aoa = [cols, ...rows.map(r => cols.map(c => r[c] ?? ''))];
   const ws = X.utils.aoa_to_sheet(aoa);
-  cols.forEach((c, i) => { const ref = X.utils.encode_cell({ r: 0, c: i }); ws[ref].s = XS.head; });
+  cols.forEach((c, i) => { const ref = X.utils.encode_cell({ r: 0, c: i }); ws[ref].v = colLabel(c); ws[ref].s = XS.head; });
   for (let r = 1; r < aoa.length; r++) cols.forEach((c, i) => {
     const cell = ws[X.utils.encode_cell({ r, c: i })];
     if (!cell) return;
@@ -204,7 +204,7 @@ async function downloadExcel(scope) {
         busy(`Adding details: ${src.title}…`);
         const raw = await ensureRaw(i);
         const { ws } = detailSheet(X, src, raw);
-        X.utils.book_append_sheet(wb, ws, safeSheet('Details ' + (src.title.match(/\(([^)]+)\)/) || [, src.title])[1]));
+        X.utils.book_append_sheet(wb, ws, safeSheet('Details - ' + src.title));
       }
       X.writeFile(wb, `${fileBase(repName)}.xlsx`);
     }
@@ -223,10 +223,12 @@ function svgForPdf(svg) {
   const resolve = v => { const m = /^var\((--[^)]+)\)$/.exec(v || ''); return m ? rootStyle.getPropertyValue(m[1]).trim() : null; };
   src.forEach((el, i) => {
     const cs = getComputedStyle(el), d = dst[i];
-    if (el.tagName === 'path' || el.tagName === 'rect' || el.tagName === 'line') {
+    if (['path', 'rect', 'line', 'circle'].includes(el.tagName)) {
       const attr = el.getAttribute('fill');
-      d.setAttribute('fill', attr === 'transparent' ? 'none' : (resolve(attr) || cs.fill));
-      if (cs.stroke && cs.stroke !== 'none') d.setAttribute('stroke', cs.stroke);
+      d.setAttribute('fill', attr === 'transparent' || attr === 'none' ? 'none' : (resolve(attr) || cs.fill));
+      const sAttr = el.getAttribute('stroke');
+      if (resolve(sAttr)) d.setAttribute('stroke', resolve(sAttr));
+      else if (cs.stroke && cs.stroke !== 'none') d.setAttribute('stroke', cs.stroke);
       d.setAttribute('stroke-width', cs.strokeWidth);
     }
     if (el.tagName === 'text') { d.setAttribute('fill', cs.fill); d.setAttribute('font-size', cs.fontSize); d.setAttribute('font-weight', cs.fontWeight); d.setAttribute('font-family', 'Segoe UI, sans-serif'); }

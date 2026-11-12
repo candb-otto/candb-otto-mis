@@ -245,7 +245,7 @@ function drawDetails() {
     ? `<select id="detSrc">${def.detailSources.map((s, i) => `<option value="${i}" ${i === d.src ? 'selected' : ''}>${esc(s.title)}</option>`).join('')}</select>` : '';
   box.innerHTML = `<div class="sec-title" style="margin-top:0">Details – ${esc(src.title)} <small>${esc(periodLabel(rp.period))}${filtered ? ' · filters applied' : ''}</small></div>
     <div class="tbl-tools">${picker}<input class="grow" id="detSearch" placeholder="Search any column" value="${esc(d.search)}"><button class="btn" id="detClose" type="button">Close details</button></div>
-    <div class="tbl-wrap"><table><thead><tr>${cols.map(col => `<th data-sort="${esc(col)}" class="${numCols.has(col) ? 'num' : ''}">${esc(col)}${d.sort === col ? (d.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr></thead>
+    <div class="tbl-wrap"><table><thead><tr>${cols.map(col => `<th data-sort="${esc(col)}" class="${numCols.has(col) ? 'num' : ''}">${esc(colLabel(col))}${d.sort === col ? (d.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr></thead>
     <tbody>${slice.map(r => `<tr>${cols.map(col => `<td class="${numCols.has(col) ? 'num' : ''}">${r[col] == null ? '' : typeof r[col] === 'number' ? r[col].toLocaleString('en-IN') : esc(r[col])}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${cols.length}" class="empty">No rows match.</td></tr>`}</tbody></table></div>
     <div class="pager" id="detPager"></div>`;
   pager('detPager', rows.length, d.page, p => { d.page = p; drawDetails(); });
@@ -279,11 +279,10 @@ const unitKey = u => String(u || '').replace(/\s*\(.*\)\s*$/, '').trim();
 const SewingReport = {
   sources: ['sewing_lot', 'sewing_daily', 'sewing_ot'],
   detailSources: [
-    { report: 'sewing_lot', title: 'Sewing lots (Sew 1)', map: { unit: 'Unit', brand: 'Brand', category: 'Catagory', date: 'DATE' } },
-    { report: 'sewing_daily', title: 'Daily tailors (Sew 2)', map: { unit: 'Unit', date: 'DATE' } },
+    { report: 'sewing_lot', title: 'Sewing lots', map: { unit: 'Unit', brand: 'Brand', category: 'Catagory', date: 'DATE' } },
+    { report: 'sewing_daily', title: 'Daily tailors', map: { unit: 'Unit', date: 'DATE' } },
   ],
   dims: { unit: 'Unit', brand: 'Brand', category: 'Category', date: 'Date' },
-  note: 'Tailor figures from Sew 2, OT from Sew OT',
 
   async load(p, c) {
     const trendFrom = addMonths(p.to, -11);
@@ -292,8 +291,8 @@ const SewingReport = {
     const [lot, lotPrev, trend, daily, dailyPrev, ot, otPrev] = await Promise.all([
       agg({ report: 'sewing_lot', from: p.from, to: p.to, by: [...lotBy, 'date'], sum: ['QTY', 'Equ. Qty'] }),
       agg({ report: 'sewing_lot', from: c.from, to: c.to, by: [...lotBy, 'date'], sum: ['QTY', 'Equ. Qty'] }),
-      agg({ report: 'sewing_lot', from: trendFrom, to: p.to, by: ['month', 'Unit', 'Brand', 'Catagory'], sum: ['QTY'] }),
-      agg({ report: 'sewing_daily', from: p.from, to: p.to, by: ['Unit', 'date'], sum: ['Qty', 'Tailor Prersent'] }),
+      agg({ report: 'sewing_lot', from: addMonths(p.to, -23), to: p.to, by: ['month', 'Unit', 'Brand', 'Catagory'], sum: ['QTY'] }),
+      agg({ report: 'sewing_daily', from: p.from, to: p.to, by: ['Unit', 'date'], sum: ['Qty', 'Tailor Prersent', 'Tailor Strength'] }),
       agg({ report: 'sewing_daily', from: c.from, to: c.to, by: ['Unit', 'date'], sum: ['Qty', 'Tailor Prersent'] }),
       otCols.length ? agg({ report: 'sewing_ot', from: p.from, to: p.to, by: ['date'], sum: ['Total', ...otCols] }) : null,
       otCols.length ? agg({ report: 'sewing_ot', from: c.from, to: c.to, by: ['date'], sum: ['Total', ...otCols] }) : null,
@@ -305,7 +304,7 @@ const SewingReport = {
       lotPrev: objRows(lotPrev, lotNames),
       trend: objRows(trend, ['month', 'Unit', 'Brand', 'Catagory', 'QTY', 'n']),
       trendFrom,
-      daily: objRows(daily, ['Unit', 'date', 'Qty', 'Present', 'n']),
+      daily: objRows(daily, ['Unit', 'date', 'Qty', 'Present', 'Strength', 'n']),
       dailyPrev: objRows(dailyPrev, ['Unit', 'date', 'Qty', 'Present', 'n']),
       ot: ot ? objRows(ot, otNames) : [], otPrev: otPrev ? objRows(otPrev, otNames) : [], otCols,
     };
@@ -346,45 +345,47 @@ const SewingReport = {
       tile('Sewing Qty', n0(qty), `Equivalent qty ${n0(eq)}`, deltaHtml(qty, prevQty, prevLabel)),
       tile('Average per Day', n0(avgDay), `${days} working day${days === 1 ? '' : 's'}`, deltaHtml(avgDay, prevDays ? prevQty / prevDays : null, prevLabel)),
       byBrandCat ? tile('Tailors Present / Day', '–', 'Not split by brand or category') :
-        tile('Tailors Present / Day', n0(presentDay(dF)), 'From Sew 2', deltaHtml(presentDay(dF), presentDay(dP), prevLabel)),
+        tile('Tailors Present / Day', n0(presentDay(dF)), 'Average on working days', deltaHtml(presentDay(dF), presentDay(dP), prevLabel)),
       byBrandCat ? tile('Pieces per Tailor / Day', '–', 'Not split by brand or category') :
-        tile('Pieces per Tailor / Day', n1(perTailor(dF)), 'Sew 2 qty ÷ tailors present', deltaHtml(perTailor(dF), perTailor(dP), prevLabel, n1)),
+        tile('Pieces per Tailor / Day', n1(perTailor(dF)), 'Output ÷ tailors present', deltaHtml(perTailor(dF), perTailor(dP), prevLabel, n1)),
       byBrandCat || !otCol ? tile('OT Head Count / Day', '–', otCol ? 'Not split by brand or category' : 'No OT data for this unit') :
-        tile('OT Head Count / Day', n1(otDay(data.ot)), 'Calculated head count, OT days', deltaHtml(otDay(data.ot), otDay(data.otPrev), prevLabel, n1)),
+        tile('OT Head Count / Day', n1(otDay(data.ot)), 'Average on OT days', deltaHtml(otDay(data.ot), otDay(data.otPrev), prevLabel, n1)),
     ].join('');
 
     $('repCharts').innerHTML = `<div class="chart-grid">${chartBox('cTrend') + chartBox('cDaily')}</div>
-      <div class="chart-grid three">${chartBox('cUnit') + chartBox('cBrand') + chartBox('cCat')}</div>`;
+      <div class="chart-grid">${chartBox('cUnit') + chartBox('cAtt')}</div>
+      <div class="chart-grid">${chartBox('cBrand') + chartBox('cCat')}</div>`;
     const fmt = v => n0(v);
-    const inPeriod = m => m >= ctx.period.from && m <= ctx.period.to;
 
-    // 1. 12-month trend (click a month to switch the period)
-    const tr = data.trend.filter(r => matches(r, f, map, ['date']));
-    const months = monthSeq(data.trendFrom, ctx.period.to);
-    const tm = groupSum(tr, 'month', 'QTY', false);
-    Charts.barsV($('cTrend'), months.map(m => ({ key: m, label: fmtMonth(m), short: shortMonth(m), value: (tm.find(x => x.key === m) || {}).value || 0, hi: inPeriod(m) })),
-      { id: 'sew-trend', title: 'Sewing Qty – last 12 months', sub: 'Click a month to view it', keyLabel: 'Month', valueLabel: 'Sewing Qty', fmt,
-        onClick: d => setPeriod({ from: d.key, to: d.key }) });
+    // 1-2. Trend (with same month last year) and daily output (with average line)
+    drawTrend($('cTrend'), 'sew-trend', data.trend.filter(r => matches(r, f, map, ['date'])).map(r => ({ month: r.month, v: r.QTY })), 'v', 'Sewing Qty', ctx, data.trendFrom);
+    drawDaily($('cDaily'), 'sew-daily', data.lot.filter(r => matches(r, f, map, ['date'])).map(r => ({ date: r.date, v: r.QTY })), 'v', 'Sewing Qty', ctx, f);
 
-    // 2. Daily output in the period
-    const dd = data.lot.filter(r => matches(r, f, map, ['date']));
-    const byDay = groupSum(dd, 'date', 'QTY', false).filter(x => x.key !== '(blank)').sort((a, b) => a.key < b.key ? -1 : 1);
-    Charts.barsV($('cDaily'), byDay.map(x => ({ ...x, label: fmtDay(x.key), short: x.key.slice(8), hi: f.date ? f.date === x.key : false })),
-      { id: 'sew-daily', title: 'Daily Sewing Qty', sub: monthsBetween(ctx.period.from, ctx.period.to) > 1 ? 'All days in the period' : '', keyLabel: 'Date', valueLabel: 'Sewing Qty', fmt,
-        onClick: d => setFilter('date', d.key) });
+    // 3. Actual vs equivalent qty by unit (grouped columns)
+    const unitRows = data.lot.filter(r => matches(r, f, map, ['unit']));
+    const unitKeys = [...new Set(unitRows.map(r => r.Unit).filter(Boolean))].sort();
+    Charts.columns($('cUnit'), unitKeys.map(k => ({ key: k, label: k })),
+      [{ key: 'a', label: 'Actual', color: 'var(--s1)' }, { key: 'e', label: 'Equivalent', color: 'var(--s3)' }],
+      unitKeys.map(k => { const L = unitRows.filter(r => r.Unit === k); return [sum(L, r => r.QTY), sum(L, r => r.EQ)]; }),
+      { id: 'sew-unit', title: 'Actual vs Equivalent Qty by Unit', mode: 'group', keyLabel: 'Unit', fmt, selected: f.unit ?? null, onClick: c => setFilter('unit', c.key) });
 
-    // 3-5. By unit, brand, category (each chart is filtered by the others, and highlights its own selection)
-    const sharedTip = total => d => tipHtml(d.label, [['Sewing Qty', n0(d.value)], ['Share', total ? (d.value / total * 100).toFixed(1) + '%' : '–']]);
-    const dimChart = (host, id, title, dim, field, n) => {
+    // 4. Tailor attendance by unit (stacked present / absent)
+    if (byBrandCat) $('cAtt').innerHTML = '<h2 class="chart-title">Attendance by Unit</h2><p class="empty">Attendance is not split by brand or category.</p>';
+    else drawAttendance($('cAtt'), 'sew-att', data.daily.filter(r => matches(r, f, dmap, ['unit'])), 'Unit', 'Unit', 'Present', 'Strength', f, 'unit');
+
+    // 5-6. Brand (doughnut) and category (bars), each in its own colours
+    const dimChart = (host, id, title, dim, field, n, kind) => {
+      const colors = dimColors(data.trend, field, 'QTY');
       const rows = data.lot.filter(r => matches(r, f, map, [dim]));
-      const items = topN(groupSum(rows, field, 'QTY'), n);
+      const items = topN(groupSum(rows, field, 'QTY'), n).map(x => ({ ...x, color: colors[x.other ? '__other' : x.key] }));
       const total = sum(items, d => d.value);
-      Charts.barsH($(host), items, { id, title, keyLabel: this.dims[dim], valueLabel: 'Sewing Qty', fmt, selected: f[dim] ?? null,
-        tip: sharedTip(total), onClick: d => { if (!d.other) setFilter(dim, d.key); } });
+      const o = { id, title, keyLabel: this.dims[dim], valueLabel: 'Sewing Qty', fmt, selected: f[dim] ?? null, centerLabel: 'Sewing Qty',
+        tip: d => tipHtml(d.label, [['Sewing Qty', n0(d.value)], ['Share', total ? (d.value / total * 100).toFixed(1) + '%' : '–']]),
+        onClick: d => { if (!d.other) setFilter(dim, d.key); } };
+      if (kind === 'donut') Charts.donut($(host), items, o); else Charts.barsH($(host), items, o);
     };
-    dimChart('cUnit', 'sew-unit', 'Sewing Qty by Unit', 'unit', 'Unit', 12);
-    dimChart('cBrand', 'sew-brand', 'Sewing Qty by Brand', 'brand', 'Brand', 10);
-    dimChart('cCat', 'sew-cat', 'Sewing Qty by Category', 'category', 'Catagory', 12);
+    dimChart('cBrand', 'sew-brand', 'Sewing Qty by Brand', 'brand', 'Brand', 6, 'donut');
+    dimChart('cCat', 'sew-cat', 'Sewing Qty by Category', 'category', 'Catagory', 12, 'bars');
 
     // Summary table by unit
     const units = [...new Set(lotF.map(r => r.Unit).concat(byBrandCat ? [] : dF.map(r => r.Unit)).filter(Boolean))].sort();
@@ -408,7 +409,7 @@ const SewingReport = {
           <td class="num">${ch == null ? '–' : `${ch >= 0 ? '▲ +' : '▼ '}${ch.toFixed(1)}%`}</td><td class="num">${days}</td><td class="num">${n0(avgDay)}</td>
           <td class="num">${byBrandCat ? '–' : n0(presentDay(dF))}</td><td class="num">${byBrandCat ? '–' : n1(perTailor(dF))}</td><td class="num">${n0(eq)}</td></tr></tfoot>` : ''}
       </table></div>
-      <p class="note small foot-note">Days = days with sewing output. Tailors / Day = average tailors present on working days (Sew 2). Equ. Qty = equivalent quantity from the file.</p>`;
+      <p class="note small foot-note">Days = days with sewing output. Tailors / Day = average tailors present on working days. Equ. Qty = equivalent quantity.</p>`;
     $('repSummary').querySelectorAll('tr[data-unit]').forEach(tr => tr.onclick = () => setFilter('unit', tr.dataset.unit));
     $('btnDetails').onclick = () => openDetails(0);
   },
@@ -443,6 +444,56 @@ function deltaCell(cur, prev) {
   if (cur == null || !prev) return '–';
   const ch = (cur - prev) / prev * 100;
   return `<span class="${ch >= 0 ? 'up' : 'down'}">${ch >= 0 ? '▲ +' : '▼ '}${ch.toFixed(1)}%</span>`;
+}
+
+// ---------- shared chart helpers ----------
+// Colour map for one dimension, weighted by the 2-year totals (biggest names get the six colours)
+function dimColors(rows, field, valueKey) {
+  const w = {};
+  rows.forEach(r => { const k = r[field]; if (k != null) w[k] = (w[k] || 0) + (Number(r[valueKey]) || 0); });
+  return Charts.colorMap(Object.keys(w), w);
+}
+// Friendlier names for a few raw column headings (typos in the source data)
+const COL_LABELS = { 'Catagory': 'Category', 'Tailor Prersent': 'Tailor Present', 'No- of Days': 'No. of Days', 'Received DC No-': 'Received DC No.', 'Pcs/ Table': 'Pcs / Table' };
+const colLabel = c => COL_LABELS[c] || c;
+
+// 12-month columns + "same month last year" line (rows cover 24 months: {month, [valueKey]})
+function drawTrend(host, id, rows, valueKey, label, ctx, trendFrom) {
+  const by = new Map();
+  rows.forEach(r => by.set(r.month, (by.get(r.month) || 0) + (Number(r[valueKey]) || 0)));
+  const items = monthSeq(trendFrom, ctx.period.to).map(m => {
+    const ly = addMonths(m, -12);
+    return { key: m, label: fmtMonth(m), short: shortMonth(m), value: by.get(m) || 0, line: by.has(ly) ? by.get(ly) : null, hi: m >= ctx.period.from && m <= ctx.period.to };
+  });
+  const hasLine = items.some(d => d.line != null);
+  Charts.barsV(host, items, { id, title: `${label} – last 12 months`, sub: `${hasLine ? 'Line = same month last year · ' : ''}click a month to view it`,
+    keyLabel: 'Month', valueLabel: label, lineLabel: hasLine ? 'Same month last year' : null, fmt: n0,
+    onClick: d => setPeriod({ from: d.key, to: d.key }) });
+}
+
+// Daily columns with a dashed "average per day" line
+function drawDaily(host, id, rows, valueKey, label, ctx, f) {
+  const by = groupSum(rows.filter(r => r.date), 'date', valueKey, false).sort((a, b) => (a.key < b.key ? -1 : 1));
+  const worked = by.filter(x => x.value > 0);
+  const avg = worked.length ? sum(worked, x => x.value) / worked.length : 0;
+  Charts.barsV(host, by.map(x => ({ ...x, label: fmtDay(x.key), short: x.key.slice(8), hi: f.date ? f.date === x.key : false })),
+    { id, title: `Daily ${label}`, sub: monthsBetween(ctx.period.from, ctx.period.to) > 1 ? 'All days in the period' : 'Click a day to filter',
+      keyLabel: 'Date', valueLabel: label, fmt: n0, avg: avg ? { value: avg, label: 'Avg / day' } : null, onClick: d => setFilter('date', d.key) });
+}
+
+// Present vs absent (average per working day) for each unit / floor, stacked
+function drawAttendance(host, id, rows, dimKey, dimLabel, presentKey, strengthKey, f, filterKey = dimKey) {
+  const keys = [...new Set(rows.map(r => r[dimKey]).filter(k => k != null && k !== '(blank)'))].sort();
+  const vals = keys.map(k => {
+    const s = summarise(rows.filter(r => r[dimKey] === k));
+    const d = s.days(presentKey);
+    if (!d) return [0, 0];
+    const p = s.sum(presentKey) / d, st = s.sum(strengthKey) / d;
+    return [p, Math.max(0, st - p)];
+  });
+  Charts.columns(host, keys.map(k => ({ key: k, label: k })), [{ key: 'p', label: 'Present', color: 'var(--s2)' }, { key: 'a', label: 'Absent', color: 'var(--absent)' }], vals,
+    { id, title: `Attendance by ${dimLabel}`, sub: 'Average people per working day', keyLabel: dimLabel, fmt: n0, selected: f[filterKey] ?? null,
+      onClick: c => setFilter(filterKey, c.key) });
 }
 
 function makeReport(cfg) {
@@ -497,8 +548,9 @@ function makeReport(cfg) {
     })),
 
     async load(p, c) {
+      // trend covers 24 months: the last 12 are drawn, the 12 before give the "same month last year" line
       const trendFrom = addMonths(p.to, -11);
-      const parts = await Promise.all(cfg.sources.map(s => Promise.all([loadRows(s, p.from, p.to), loadRows(s, c.from, c.to), loadTrend(s, trendFrom, p.to)])));
+      const parts = await Promise.all(cfg.sources.map(s => Promise.all([loadRows(s, p.from, p.to), loadRows(s, c.from, c.to), loadTrend(s, addMonths(p.to, -23), p.to)])));
       return { cur: clean(parts.flatMap(x => x[0])), prev: clean(parts.flatMap(x => x[1])), trend: clean(parts.flatMap(x => x[2])), trendFrom };
     },
 
@@ -517,33 +569,29 @@ function makeReport(cfg) {
       $('repTiles').innerHTML = cfg.kpis(S, P, ctx, h).join('');
 
       const charts = cfg.dims.filter(d => d.chart);
+      const extras = cfg.extras || [];
       $('repCharts').innerHTML = `<div class="chart-grid">${chartBox('cTrend') + chartBox('cDaily')}</div>
-        <div class="chart-grid three">${charts.map(d => chartBox('c_' + d.key)).join('')}</div>`;
+        <div class="chart-grid three">${charts.map(d => chartBox('c_' + d.key)).join('')}${extras.map(x => chartBox('x_' + x.id)).join('')}</div>`;
       const fmt = n0;
-      const inPeriod = m => m >= ctx.period.from && m <= ctx.period.to;
       const ml = cfg.mainLabel;
 
-      const tr = data.trend.filter(r => matches(r, f, ident, ['date']));
-      const months = monthSeq(data.trendFrom, ctx.period.to);
-      const tm = groupSum(tr, 'month', cfg.main, false);
-      Charts.barsV($('cTrend'), months.map(m => ({ key: m, label: fmtMonth(m), short: shortMonth(m), value: (tm.find(x => x.key === m) || {}).value || 0, hi: inPeriod(m) })),
-        { id: cfg.id + '-trend', title: `${ml} – last 12 months`, sub: 'Click a month to view it', keyLabel: 'Month', valueLabel: ml, fmt,
-          onClick: d => setPeriod({ from: d.key, to: d.key }) });
+      drawTrend($('cTrend'), cfg.id + '-trend', data.trend.filter(r => matches(r, f, ident, ['date'])), cfg.main, ml, ctx, data.trendFrom);
+      drawDaily($('cDaily'), cfg.id + '-daily', data.cur.filter(r => matches(r, f, ident, ['date'])), cfg.main, ml, ctx, f);
 
-      const dd = data.cur.filter(r => matches(r, f, ident, ['date']));
-      const byDay = groupSum(dd.filter(r => r.date), 'date', cfg.main, false).sort((a, b) => (a.key < b.key ? -1 : 1));
-      Charts.barsV($('cDaily'), byDay.map(x => ({ ...x, label: fmtDay(x.key), short: x.key.slice(8), hi: f.date ? f.date === x.key : false })),
-        { id: cfg.id + '-daily', title: `Daily ${ml}`, sub: monthsBetween(ctx.period.from, ctx.period.to) > 1 ? 'All days in the period' : 'Click a day to filter', keyLabel: 'Date', valueLabel: ml, fmt,
-          onClick: d => setFilter('date', d.key) });
-
+      // One chart per dimension: doughnut for a share of the whole, bars for a ranking.
+      // Each name keeps the same colour (colours follow the name, not the size).
       for (const d of charts) {
+        const colors = dimColors(data.trend, d.key, cfg.main);
         const rows = data.cur.filter(r => matches(r, f, ident, [d.key]));
-        const items = topN(groupSum(rows, d.key, cfg.main), d.top || 12);
+        const items = topN(groupSum(rows, d.key, cfg.main), d.top || (d.chart === 'donut' ? 6 : 12)).map(x => ({ ...x, color: colors[x.other ? '__other' : x.key] }));
         const total = sum(items, x => x.value);
-        Charts.barsH($('c_' + d.key), items, { id: `${cfg.id}-${d.key}`, title: `${ml} by ${d.label}`, keyLabel: d.label, valueLabel: ml, fmt, selected: f[d.key] ?? null,
+        const common = { id: `${cfg.id}-${d.key}`, title: `${ml} by ${d.label}`, keyLabel: d.label, valueLabel: ml, fmt, selected: f[d.key] ?? null,
           tip: x => tipHtml(x.label, [[ml, n0(x.value)], ['Share', total ? (x.value / total * 100).toFixed(1) + '%' : '–']]),
-          onClick: x => { if (!x.other) setFilter(d.key, x.key); } });
+          onClick: x => { if (!x.other) setFilter(d.key, x.key); } };
+        if (d.chart === 'donut') Charts.donut($('c_' + d.key), items, { ...common, centerLabel: ml });
+        else Charts.barsH($('c_' + d.key), items, common);
       }
+      for (const x of extras) x.draw($('x_' + x.id), { data, cur: data.cur.filter(r => matches(r, f, ident, [x.dim])), f, ctx, id: `${cfg.id}-${x.id}` });
 
       // Summary table
       const sd = cfg.summary.dim, sdl = cfg.dims.find(d => d.key === sd).label;
@@ -581,10 +629,10 @@ const COL = {
 // ---------- Fabric Issue ----------
 const FabricReport = makeReport({
   id: 'fab', main: 'qty', mainLabel: 'Fabric Issued',
-  sources: [{ report: 'fabric', title: 'Fabric issue (Fabric sheet)', dateCol: 'DATE',
+  sources: [{ report: 'fabric', title: 'Fabric issue', dateCol: 'DATE',
     dims: { unit: 'Unit', brand: 'Brand', category: 'Category', dept: 'Department' }, measures: { qty: 'Qty issued' } }],
-  dims: [{ key: 'unit', label: 'Unit', chart: true }, { key: 'brand', label: 'Brand', chart: true, top: 10 },
-    { key: 'category', label: 'Category', chart: true }, { key: 'dept', label: 'Department', chart: true }],
+  dims: [{ key: 'unit', label: 'Unit', chart: 'bars' }, { key: 'brand', label: 'Brand', chart: 'donut' },
+    { key: 'dept', label: 'Department', chart: 'donut' }, { key: 'category', label: 'Category', chart: 'bars' }],
   kpis: (S, P, ctx, h) => {
     const top = groupSum(S.rows, 'unit', 'qty')[0];
     return [
@@ -600,9 +648,10 @@ const FabricReport = makeReport({
 // ---------- Cutting ----------
 const CuttingReport = makeReport({
   id: 'cut', main: 'prod', mainLabel: 'Cutting Qty',
-  sources: [{ report: 'cutting', title: 'Cutting (Cutting sheet)', dateCol: 'Date', dims: { unit: 'Unit' },
+  sources: [{ report: 'cutting', title: 'Cutting', dateCol: 'Date', dims: { unit: 'Unit' },
     measures: { prod: 'Production Qty', fabIn: 'Fabric In', inward: 'Inward Qty', actual: 'Actual Strength', present: 'Present Strength' } }],
-  dims: [{ key: 'unit', label: 'Unit', chart: true }],
+  dims: [{ key: 'unit', label: 'Unit', chart: 'donut' }],
+  extras: [{ id: 'att', dim: 'unit', draw: (host, x) => drawAttendance(host, x.id, x.cur, 'unit', 'Unit', 'present', 'actual', x.f) }],
   kpis: (S, P, ctx, h) => [
     tile('Cutting Qty', n0(S.sum('prod')), `${S.days('prod')} working days`, h.d(S.sum('prod'), P.sum('prod'))),
     tile('Average per Day', n0(S.perDay('prod')), 'Cutting qty ÷ working days', h.d(S.perDay('prod'), P.perDay('prod'))),
@@ -621,13 +670,14 @@ const CuttingReport = makeReport({
 const FusingReport = makeReport({
   id: 'fus', main: 'prod', mainLabel: 'Production',
   sources: [
-    { report: 'fusing', title: 'Fusing (Fusing sheet)', dateCol: 'Date', dims: { unit: 'Unit' }, consts: { process: 'Fusing' },
+    { report: 'fusing', title: 'Fusing', dateCol: 'Date', dims: { unit: 'Unit' }, consts: { process: 'Fusing' },
       measures: { prod: 'Production', inward: 'Inward', actual: 'Actual Strength', present: 'Present Strength' } },
-    { report: 'embroidery', title: 'Embroidery (Emb sheet)', dateCol: 'Date', consts: { process: 'Embroidery', unit: 'Embroidery' },
+    { report: 'embroidery', title: 'Embroidery', dateCol: 'Date', consts: { process: 'Embroidery', unit: 'Embroidery' },
       measures: { prod: 'Production Qty', inward: 'Inward Qty', actual: 'Actual Strength', present: 'Present Strength' } },
   ],
-  dims: [{ key: 'process', label: 'Process', chart: true }, { key: 'unit', label: 'Floor', chart: true }],
+  dims: [{ key: 'process', label: 'Process', chart: 'donut' }, { key: 'unit', label: 'Floor', chart: 'bars' }],
   filterKey: 'unit',
+  extras: [{ id: 'att', dim: 'unit', draw: (host, x) => drawAttendance(host, x.id, x.cur, 'unit', 'Floor', 'present', 'actual', x.f) }],
   kpis: (S, P, ctx, h) => {
     const part = (X, pr) => summarise(X.rows.filter(r => r.process === pr));
     const fs = part(S, 'Fusing'), fp = part(P, 'Fusing'), es = part(S, 'Embroidery'), ep = part(P, 'Embroidery');
@@ -642,15 +692,20 @@ const FusingReport = makeReport({
   summary: { dim: 'unit', cols: [COL.qty('prod', 'Production'), COL.share('prod'), COL.vs('prod'), COL.qty('inward', 'Inward'),
     COL.days('prod'), COL.perDay('prod', 'Avg / Day'), COL.perDay('present', 'Present / Day'),
     { label: 'Pcs / Person / Day', fmt: 'n1', get: s => s.ratio('prod', 'present') }] },
-  footNote: 'Fusing floors come from the Fusing sheet; Embroidery has no floor column, so it is shown as one line.',
+  footNote: 'Embroidery is shown as one line (it is not split by floor).',
 });
 
 // ---------- Ironing ----------
 const IroningReport = makeReport({
   id: 'iron', main: 'qty', mainLabel: 'Ironing Qty',
-  sources: [{ report: 'ironing', title: 'Ironing (Ironing sheet)', dateCol: 'Date', dims: { unit: 'Floor' },
+  sources: [{ report: 'ironing', title: 'Ironing', dateCol: 'Date', dims: { unit: 'Floor' },
     measures: { qty: 'Production Quantity', tables: 'Production Table' } }],
-  dims: [{ key: 'unit', label: 'Floor', chart: true }],
+  dims: [{ key: 'unit', label: 'Floor', chart: 'donut' }],
+  extras: [{ id: 'ppt', dim: 'unit', draw: (host, x) => {
+    const colors = dimColors(x.data.trend, 'unit', 'qty');
+    const items = [...new Set(x.cur.map(r => r.unit))].sort().map(k => { const s = summarise(x.cur.filter(r => r.unit === k)); return { key: k, label: k, value: s.ratio('qty', 'tables') || 0, color: colors[k] }; });
+    Charts.barsH(host, items, { id: x.id, title: 'Pieces per Table by Floor', keyLabel: 'Floor', valueLabel: 'Pcs / Table', fmt: n1, valueText: d => n1(d.value), selected: x.f.unit ?? null, onClick: d => setFilter('unit', d.key) });
+  } }],
   kpis: (S, P, ctx, h) => [
     tile('Ironing Qty', n0(S.sum('qty')), `${S.days('qty')} working days`, h.d(S.sum('qty'), P.sum('qty'))),
     tile('Average per Day', n0(S.perDay('qty')), 'Ironing qty ÷ working days', h.d(S.perDay('qty'), P.perDay('qty'))),
@@ -686,7 +741,7 @@ const normFloor = v => {
 const numOr0 = v => (typeof v === 'number' ? v : Number(v) || 0);
 const WashingReport = makeReport({
   id: 'wash', main: 'sent', mainLabel: 'Sent to Washing', raw: true,
-  sources: [{ report: 'washing', title: 'Washing (Wash sheet)', dateCol: 'Sent Date', dims: { floor: 'Floor', jobber: 'Sent To' }, measures: { sent: 'Sent Qty' } }],
+  sources: [{ report: 'washing', title: 'Washing', dateCol: 'Sent Date', dims: { floor: 'Floor', jobber: 'Sent To' }, measures: { sent: 'Sent Qty' } }],
   trendCol: () => 'Sent Qty',
   normalize: { floor: normFloor },
   detailView: r => ({ ...r, Floor: normFloor(r.Floor) }),
@@ -700,7 +755,12 @@ const WashingReport = makeReport({
       pendLots: received ? 0 : 1, pendQty: received ? 0 : sent, n: 1,
     };
   },
-  dims: [{ key: 'jobber', label: 'Jobber', chart: true }, { key: 'floor', label: 'Floor', chart: true }],
+  dims: [{ key: 'jobber', label: 'Jobber', chart: 'donut' }, { key: 'floor', label: 'Floor', chart: 'bars' }],
+  extras: [{ id: 'days', dim: 'jobber', draw: (host, x) => {
+    const colors = dimColors(x.data.trend, 'jobber', 'sent');
+    const items = [...new Set(x.cur.map(r => r.jobber))].sort().map(k => { const s = summarise(x.cur.filter(r => r.jobber === k)); const l = s.sum('recvLots'); return { key: k, label: k, value: l ? s.sum('days') / l : 0, color: colors[k] }; });
+    Charts.barsH(host, items, { id: x.id, title: 'Average Days at Jobber', keyLabel: 'Jobber', valueLabel: 'Avg days', fmt: n1, valueText: d => n1(d.value), selected: x.f.jobber ?? null, onClick: d => setFilter('jobber', d.key) });
+  } }],
   filterKey: 'floor',
   note: 'Floor spellings are grouped (C, c, C1 & C2 → Floor C; several floors → Multiple floors)',
   kpis: (S, P, ctx, h) => {
@@ -709,7 +769,7 @@ const WashingReport = makeReport({
     return [
       tile('Sent to Washing', n0(S.sum('sent')), `${n0(S.sum('n'))} lot lines`, h.d(S.sum('sent'), P.sum('sent'))),
       tile('Received Back', n0(S.sum('recv')), `${pct1(S.sum('sent') ? S.sum('recv') / S.sum('sent') * 100 : null)} of sent`, h.d(S.sum('recv'), P.sum('recv'))),
-      tile('Shortage / Excess', `<span class="${short < 0 ? 'down' : ''}">${n0(short)}</span>`, 'From the sheet (− = shortage)'),
+      tile('Shortage / Excess', `<span class="${short < 0 ? 'down' : ''}">${n0(short)}</span>`, 'Minus = shortage'),
       tile('Average Days at Jobber', n1(avgDays(S)), 'Received lots only', h.d(avgDays(S), avgDays(P), n1)),
       tile('Lots Not Yet Received', n0(S.sum('pendLots')), `${n0(S.sum('pendQty'))} pcs still out`),
     ];
@@ -718,5 +778,5 @@ const WashingReport = makeReport({
     COL.qty('short', 'Short / Excess'),
     { label: 'Avg Days', fmt: 'n1', get: s => { const l = s.sum('recvLots'); return l ? s.sum('days') / l : null; } },
     COL.qty('pendLots', 'Lots Pending'), COL.qty('pendQty', 'Pcs Pending')] },
-  footNote: 'Lots pending = lines with no received date and no received qty. Average days uses the "No- of Days" column of received lots.',
+  footNote: 'Lots pending = lots not yet received back. Average days counts received lots only.',
 });
