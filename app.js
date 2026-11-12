@@ -36,52 +36,65 @@ async function api(path, body) {
 }
 
 // ---------- messages ----------
+// Shows a message in the box that belongs to whatever is on screen.
 function say(msg, kind) {
-  const el = $('status');
-  el.textContent = msg || '';
-  el.className = 'status' + (kind ? ' ' + kind : '');
+  const target = !state.user ? 'authStatus' : state.user.mustChange ? 'firstPwStatus' : 'status';
+  for (const id of ['authStatus', 'firstPwStatus', 'status']) {
+    const el = $(id);
+    const show = id === target && msg;
+    el.textContent = show ? msg : '';
+    el.className = (id === 'status' ? '' : 'auth-status ') + 'status' + (show && kind ? ' ' + kind : '');
+  }
 }
 
 // ---------- routing ----------
-const TITLES = { login: 'MIS Master System', password: 'Change Password', home: 'MIS Master System', users: 'Users' };
+const TITLES = { password: 'Change Password', home: 'Home', users: 'Users' };
 
 function go(route) { if (location.hash !== '#/' + route) location.hash = '#/' + route; else render(); }
 
 function currentRoute() { return (location.hash.replace(/^#\/?/, '') || 'home').split('?')[0]; }
 
 function render() {
-  let route = currentRoute();
-  if (!state.user) route = 'login';
-  else if (state.user.mustChange) route = 'password';
-  else if (route === 'login') route = 'home';
-  if (!TITLES[route]) route = 'home';
-  if (route === 'users' && state.user.role !== 'admin') route = 'home';
+  const u = state.user;
+  const authMode = !u || u.mustChange;
+  $('authScreen').classList.toggle('hidden', !authMode);
+  $('appShell').classList.toggle('hidden', authMode);
+  $('loginForm').classList.toggle('hidden', !!u);
+  $('firstPwForm').classList.toggle('hidden', !(u && u.mustChange));
+  document.title = authMode ? 'Log in · MIS Master System' : 'MIS Master System';
+  if (authMode) { setTimeout(() => (u ? $('fpCurrent') : $('loginId')).focus(), 0); return; }
 
-  document.body.classList.toggle('logged-out', !state.user);
+  let route = currentRoute();
+  if (!TITLES[route]) route = 'home';
+  if (route === 'users' && u.role !== 'admin') route = 'home';
+
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + route));
   document.querySelectorAll('#sidebar [data-route]').forEach(b => {
     b.classList.toggle('active', b.dataset.route === route);
-    if (b.dataset.role) b.classList.toggle('hidden', !state.user || state.user.role !== b.dataset.role);
+    if (b.dataset.role) b.classList.toggle('hidden', u.role !== b.dataset.role);
   });
   $('pageTitle').textContent = TITLES[route];
-  $('topbar').classList.toggle('hidden', !state.user);
-  if (state.user) $('whoami').textContent = `Logged in as ${state.user.name} (${state.user.loginId})`;
+  document.title = TITLES[route] + ' · MIS Master System';
+  $('userName').textContent = u.name;
+  $('userLogin').textContent = u.loginId;
+  $('avatar').textContent = initials(u.name);
 
-  if (route === 'home') $('homeName').textContent = state.user.name;
-  if (route === 'password') {
-    $('pwIntro').textContent = state.user.mustChange
-      ? 'You are using a temporary password. Please choose your own password to continue.'
-      : 'Choose a new password. You will stay logged in on this device.';
-  }
+  if (route === 'home') $('homeName').textContent = u.name;
   if (route === 'users') loadUsers();
 }
 
+function initials(name) {
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
+  return ((parts[0] || '?')[0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+
 // ---------- session ----------
-function endSession(msg) {
+function endSession(msg, kind = 'error') {
   store(TOKEN_KEY, null);
   state.user = null;
-  go('login');
-  if (msg) say(msg, 'error');
+  if (location.hash) history.replaceState(null, '', location.pathname);
+  render();
+  if (msg) say(msg, kind);
 }
 
 async function boot() {
@@ -93,15 +106,18 @@ async function boot() {
 
 $('loginForm').addEventListener('submit', async e => {
   e.preventDefault();
+  const loginId = $('loginId').value.trim(), password = $('loginPw').value;
+  if (!loginId || !password) return say('Enter your login ID and password.', 'error');
   const btn = $('loginBtn');
   btn.disabled = true; btn.textContent = 'Logging in…';
   say('');
   try {
-    const data = await api('/api/login', { loginId: $('loginId').value.trim(), password: $('loginPw').value });
+    const data = await api('/api/login', { loginId, password });
     store(TOKEN_KEY, data.token);
     state.user = data.user;
-    $('loginPw').value = '';
-    go(state.user.mustChange ? 'password' : 'home');
+    $('loginForm').reset();
+    if (!state.user.mustChange && location.hash !== '#/home') history.replaceState(null, '', '#/home');
+    render();
   } catch (err) {
     say(err.message, 'error');
   } finally {
@@ -109,36 +125,42 @@ $('loginForm').addEventListener('submit', async e => {
   }
 });
 
-$('pwForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  say('');
-  if ($('pwNew').value !== $('pwNew2').value) return say('The two new passwords do not match.', 'error');
-  const btn = $('pwBtn');
-  btn.disabled = true;
-  try {
-    const data = await api('/api/change-password', { currentPassword: $('pwCurrent').value, newPassword: $('pwNew').value });
-    state.user = data.user;
-    $('pwForm').reset();
-    go('home');
-    say('Password changed.', 'ok');
-  } catch (err) {
-    say(err.message, 'error');
-  } finally {
-    btn.disabled = false;
-  }
-});
+// Both password forms (first login, and the in-app page) work the same way.
+for (const form of [$('firstPwForm'), $('pwForm')]) {
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    say('');
+    const f = form.elements;
+    if (!f.current.value || !f.next.value) return say('Fill in all the password boxes.', 'error');
+    if (f.next.value !== f.next2.value) return say('The two new passwords do not match.', 'error');
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    try {
+      const data = await api('/api/change-password', { currentPassword: f.current.value, newPassword: f.next.value });
+      state.user = data.user;
+      form.reset();
+      history.replaceState(null, '', '#/home');
+      render();
+      say('Password saved.', 'ok');
+    } catch (err) {
+      say(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
 
-$('logoutBtn').addEventListener('click', async () => {
+document.querySelectorAll('[data-logout]').forEach(b => b.addEventListener('click', async () => {
   try { await api('/api/logout', {}); } catch { /* already logged out */ }
-  endSession();
-  say('You have logged out.', 'ok');
-});
+  endSession('You have logged out.', 'ok');
+}));
 
 document.querySelectorAll('.show-pw').forEach(b => b.addEventListener('click', () => {
   const input = $(b.dataset.for);
   const show = input.type === 'password';
   input.type = show ? 'text' : 'password';
   b.textContent = show ? 'Hide' : 'Show';
+  input.focus();
 }));
 
 // ---------- sidebar ----------
