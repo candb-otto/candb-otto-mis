@@ -48,7 +48,8 @@ function say(msg, kind) {
 }
 
 // ---------- routing ----------
-const TITLES = { password: 'Change Password', home: 'Home', users: 'Users' };
+const TITLES = { password: 'Change Password', home: 'Home', upload: 'Upload Data', users: 'Users' };
+const ADMIN_ROUTES = ['users', 'upload'];
 
 function go(route) { if (location.hash !== '#/' + route) location.hash = '#/' + route; else render(); }
 
@@ -66,7 +67,7 @@ function render() {
 
   let route = currentRoute();
   if (!TITLES[route]) route = 'home';
-  if (route === 'users' && u.role !== 'admin') route = 'home';
+  if (ADMIN_ROUTES.includes(route) && u.role !== 'admin') route = 'home';
 
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + route));
   document.querySelectorAll('#sidebar [data-route]').forEach(b => {
@@ -81,6 +82,7 @@ function render() {
 
   if (route === 'home') $('homeName').textContent = u.name;
   if (route === 'users') loadUsers();
+  if (route === 'upload') loadUploadPage();
 }
 
 function initials(name) {
@@ -228,6 +230,7 @@ function drawActivity() {
 const ACTIONS = {
   login: 'Logged in', logout: 'Logged out', login_failed: 'Login failed', change_password: 'Changed password',
   user_created: 'Added user', password_reset: 'Reset password', user_activated: 'Switched on user', user_deactivated: 'Switched off user',
+  upload: 'Uploaded data', upload_rejected: 'Upload rejected',
 };
 
 $('userSearch').addEventListener('input', () => { state.userPage = 1; drawUsers(); });
@@ -274,6 +277,279 @@ function showTemp(name, loginId, pw) {
   $('tempHide').onclick = () => { box.classList.add('hidden'); box.innerHTML = ''; };
 }
 
+// ---------- upload page ----------
+const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+const up = { config: null, file: null, sheets: [], history: [], historyPage: 1, busy: false };
+
+async function loadUploadPage() {
+  try {
+    if (!up.config) up.config = await api('/api/upload/config');
+    const [s, h] = await Promise.all([api('/api/data-status'), api('/api/uploads')]);
+    drawDataStatus(s.reports);
+    up.history = h.uploads;
+    drawHistory();
+  } catch (err) { say(err.message, 'error'); }
+}
+
+function drawDataStatus(reports) {
+  const loaded = reports.filter(r => r.rows);
+  $('statusNote').textContent = loaded.length ? `${loaded.length} of ${reports.length} reports have data` : 'No data uploaded yet';
+  $('statusRows').innerHTML = reports.map(r => `<tr class="${r.enabled ? '' : 'muted-row'}">
+    <td>${esc(r.label)}</td><td>${esc(r.sheet)}</td>
+    <td class="num">${r.rows ? fmtNum(r.rows) : '–'}</td>
+    <td>${r.firstMonth ? `${fmtMonth(r.firstMonth)} – ${fmtMonth(r.lastMonth)}` : (r.enabled ? '<span class="note">No data yet</span>' : `<span class="note">${esc(r.note || 'Not loaded')}</span>`)}</td>
+    <td>${r.lastUpdated ? fmtDate(r.lastUpdated) : '–'}</td><td>${esc(r.updatedBy || '')}</td></tr>`).join('');
+}
+
+function drawHistory() {
+  const rows = up.history;
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  up.historyPage = Math.min(up.historyPage, pages);
+  const slice = rows.slice((up.historyPage - 1) * PAGE_SIZE, up.historyPage * PAGE_SIZE);
+  const pill = { done: '<span class="pill good">Done</span>', loading: '<span class="pill warn">Loading</span>',
+    failed: '<span class="pill bad">Failed</span>', rejected: '<span class="pill bad">Rejected</span>' };
+  $('historyRows').innerHTML = slice.length ? slice.map(u => {
+    let detail = '';
+    if (u.status === 'done' && u.result) {
+      const total = u.result.reduce((a, r) => a + r.rows, 0);
+      detail = `${u.result.length} sheets · ${fmtNum(total)} rows`;
+    } else if (u.error) {
+      let e = u.error;
+      try { e = JSON.parse(u.error).map(r => `${r.label}: ${r.errors.join(' ')}`).join(' | '); } catch { /* plain text */ }
+      detail = esc(e.length > 160 ? e.slice(0, 160) + '…' : e);
+    }
+    return `<tr><td>${fmtDate(u.startedAt)}</td><td>${esc(u.fileName)}</td><td>${esc(u.by)}</td><td>${pill[u.status] || esc(u.status)}</td><td class="wrap">${detail}</td></tr>`;
+  }).join('') : '<tr><td colspan="5" class="empty">No uploads yet.</td></tr>';
+  pager('historyPager', rows.length, up.historyPage, p => { up.historyPage = p; drawHistory(); });
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = resolve; s.onerror = () => reject(new Error('Could not load the Excel reader. Check your internet connection.'));
+    document.head.appendChild(s);
+  });
+}
+
+async function ensureXLSX() { if (!window.XLSX) await loadScript(XLSX_URL); return window.XLSX; }
+
+// Reads one sheet: headers by name, rows as {header: value}, dates as YYYY-MM-DD.
+function parseSheet(X, ws, cfg) {
+  const out = { headers: [], rows: [], months: new Set(), noMonth: 0, errors: [], warnings: [] };
+  if (!ws['!ref']) { out.errors.push('The sheet is empty.'); return out; }
+  const R = X.utils.decode_range(ws['!ref']);
+  const at = (r, c) => ws[X.utils.encode_cell({ r, c })];
+  const text = cell => (cell && cell.v != null ? String(cell.v).trim() : '');
+  const ymd = n => { const d = X.SSF.parse_date_code(n); return d ? `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}` : null; };
+  const val = cell => {
+    if (!cell || cell.t === 'z' || cell.t === 'e') return null;
+    if (cell.t === 'b') return cell.v;
+    if (cell.t === 'n') return cell.z && X.SSF.is_date(cell.z) ? ymd(cell.v) : cell.v;
+    if (cell.t === 'd') { const d = cell.v; return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+    const s = String(cell.v).trim();
+    return s === '' ? null : s;
+  };
+
+  const hr = (cfg.headerRow || 1) - 1;
+  // Header names. When a sheet repeats a name under different group headings (Sew OT), the group is added in front.
+  let group = '';
+  const cols = [];
+  for (let c = R.s.c; c <= R.e.c; c++) {
+    if (cfg.groupRow) { const g = text(at(cfg.groupRow - 1, c)); if (g) group = g; }
+    cols.push({ c, name: text(at(hr, c)), group });
+  }
+  const count = {};
+  cols.forEach(k => { if (k.name) count[k.name.toLowerCase()] = (count[k.name.toLowerCase()] || 0) + 1; });
+  if (cfg.groupRow) cols.forEach(k => { if (k.name && count[k.name.toLowerCase()] > 1 && k.group) k.name = `${k.group} | ${k.name}`; });
+
+  const named = cols.filter(k => k.name);
+  const blank = cols.filter(k => !k.name);
+  out.headers = named.map(k => k.name);
+  const seen = {};
+  for (const k of named) {
+    const key = k.name.toLowerCase(), col = X.utils.encode_col(k.c);
+    if (seen[key]) out.errors.push(`Two columns are named "${k.name}" (columns ${seen[key]} and ${col}). Please rename one of them in the Excel file.`);
+    else seen[key] = col;
+  }
+  for (const need of [cfg.monthCol, cfg.dateCol]) if (!out.headers.includes(need)) out.errors.push(`Column "${need}" is missing.`);
+  if (out.errors.length) return out;
+
+  const blankHits = {};
+  for (let r = hr + 1; r <= R.e.r; r++) {
+    const obj = {};
+    let any = false;
+    for (const k of named) { const v = val(at(r, k.c)); if (v !== null) { obj[k.name] = v; any = true; } }
+    for (const k of blank) { if (val(at(r, k.c)) !== null) blankHits[k.c] = (blankHits[k.c] || 0) + 1; }
+    if (!any) continue;
+    const m = obj[cfg.monthCol];
+    if (typeof m !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(m)) { out.noMonth++; continue; }
+    const month = m.slice(0, 7);
+    const d = obj[cfg.dateCol];
+    out.rows.push([month, typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null, obj]);
+    out.months.add(month);
+  }
+  for (const [c, n] of Object.entries(blankHits)) {
+    out.warnings.push(`Column ${X.utils.encode_col(Number(c))} has no header; its ${fmtNum(n)} values will not be loaded.`);
+  }
+  if (out.noMonth) out.warnings.push(`${fmtNum(out.noMonth)} rows have no valid "${cfg.monthCol}" date and will be skipped.`);
+  return out;
+}
+
+async function handleFile(file) {
+  if (!file || up.busy) return;
+  say('');
+  if (!/\.(xlsx|xlsm|xls)$/i.test(file.name)) return say('Please choose an Excel file (.xlsx).', 'error');
+  up.file = file;
+  up.sheets = [];
+  $('checkArea').classList.remove('hidden');
+  $('checkFile').textContent = file.name;
+  $('checkInfo').textContent = 'Reading the file…';
+  $('checkRows').innerHTML = '';
+  $('uploadBtn').disabled = true;
+  $('progress').classList.add('hidden');
+  try {
+    if (!up.config) up.config = await api('/api/upload/config');
+    const X = await ensureXLSX();
+    const wb = X.read(await file.arrayBuffer(), { type: 'array', cellNF: true, cellDates: false });
+    for (const name of wb.SheetNames) {
+      const key = name.trim().toLowerCase();
+      const cfg = up.config.reports.find(r => r.sheet.toLowerCase() === key);
+      const entry = { sheet: name, cfg, rows: [], headers: [], months: new Set(), errors: [], warnings: [], info: [] };
+      up.sheets.push(entry);
+      if (!cfg) { entry.skip = up.config.skipSheets[key] || 'Not a known report sheet — skipped.'; continue; }
+      if (cfg.enabled === false) { entry.skip = cfg.note || 'Not loaded at the moment.'; continue; }
+      Object.assign(entry, parseSheet(X, wb.Sheets[name], cfg));
+    }
+    const toCheck = up.sheets.filter(s => s.cfg && !s.skip && !s.errors.length);
+    if (toCheck.length) {
+      const res = await api('/api/upload/check', { fileName: file.name, sheets: toCheck.map(s => ({ report: s.cfg.key, headers: s.headers, rows: s.rows.length })) });
+      for (const r of res.results) {
+        const s = toCheck.find(x => x.cfg.key === r.report);
+        s.errors.push(...r.errors);
+        if (r.firstUpload) s.info.push('First upload for this report: these columns will be remembered.');
+        else if (r.newColumns.length) s.info.push(`New column${r.newColumns.length > 1 ? 's' : ''} will be added: ${r.newColumns.join(', ')}`);
+      }
+    }
+    drawCheck();
+  } catch (err) {
+    $('checkInfo').textContent = '';
+    say(err.message || 'Could not read the file.', 'error');
+  }
+}
+
+function drawCheck() {
+  const loadable = up.sheets.filter(s => s.cfg && !s.skip);
+  const bad = loadable.filter(s => s.errors.length);
+  const totalRows = loadable.reduce((a, s) => a + s.rows.length, 0);
+  $('checkInfo').textContent = `${up.sheets.length} sheets found · ${loadable.length} to load · ${fmtNum(totalRows)} rows` +
+    (bad.length ? ` · ${bad.length} with problems — fix them in Excel and choose the file again` : ' · ready to upload');
+  $('uploadBtn').disabled = !!bad.length || !loadable.length;
+  $('checkRows').innerHTML = up.sheets.map(s => {
+    const months = [...s.months].sort();
+    let result;
+    if (s.skip) result = `<span class="pill muted">Skipped</span><ul class="msgs"><li class="info">${esc(s.skip)}</li></ul>`;
+    else {
+      const items = [...s.errors.map(e => `<li class="err">${esc(e)}</li>`), ...s.warnings.map(w => `<li class="warn">${esc(w)}</li>`), ...s.info.map(i => `<li class="info">${esc(i)}</li>`)];
+      result = (s.errors.length ? '<span class="pill bad">Problem</span>' : s.warnings.length ? '<span class="pill warn">Ready, with notes</span>' : '<span class="pill good">Ready</span>') +
+        (items.length ? `<ul class="msgs">${items.join('')}</ul>` : '');
+    }
+    return `<tr class="${s.skip ? 'muted-row' : ''}"><td>${esc(s.sheet)}</td><td>${s.cfg ? esc(s.cfg.label) : '–'}</td>
+      <td class="num">${s.skip ? '–' : fmtNum(s.rows.length)}</td>
+      <td>${months.length ? `${fmtMonth(months[0])} – ${fmtMonth(months.at(-1))} <span class="note">(${months.length})</span>` : '–'}</td><td>${result}</td></tr>`;
+  }).join('');
+}
+
+async function sendText(path, text) {
+  const res = await fetch(API + path, { method: 'POST', headers: { 'Content-Type': 'text/plain', Authorization: 'Bearer ' + store(TOKEN_KEY) }, body: text })
+    .catch(() => { throw new Error('Lost connection to the server during upload.'); });
+  const data = await res.json().catch(() => ({ ok: false, error: 'Unexpected reply from the server.' }));
+  if (!res.ok || !data.ok) throw new Error(data.error || 'Upload failed.');
+  return data;
+}
+
+function progress(done, total, label) {
+  $('progress').classList.remove('hidden');
+  const pct = total ? Math.round(done / total * 100) : 0;
+  $('progressBar').style.width = pct + '%';
+  $('progressText').textContent = `${label} ${pct}% (${fmtNum(done)} of ${fmtNum(total)} rows)`;
+}
+
+async function startUpload() {
+  const sheets = up.sheets.filter(s => s.cfg && !s.skip && !s.errors.length && s.rows.length);
+  if (!sheets.length || up.busy) return;
+  const total = sheets.reduce((a, s) => a + s.rows.length, 0);
+  if (!confirm(`Upload ${fmtNum(total)} rows from ${sheets.length} sheets?\n\nFor each sheet, the months in this file will replace the same months already in the system. Other months stay as they are.`)) return;
+  up.busy = true;
+  $('uploadBtn').disabled = true; $('clearFileBtn').disabled = true;
+  window.addEventListener('beforeunload', stopLeave);
+  say('');
+  let uploadId = null;
+  try {
+    const start = await api('/api/upload/start', { fileName: up.file.name, sheets: sheets.map(s => ({ report: s.cfg.key, headers: s.headers, rows: s.rows.length })) });
+    if (!start.canUpload) {
+      start.results.forEach(r => { const s = sheets.find(x => x.cfg.key === r.report); if (s) s.errors = r.errors; });
+      drawCheck();
+      throw new Error('The file has problems; nothing was uploaded.');
+    }
+    uploadId = start.uploadId;
+    const max = up.config.maxChunkBytes;
+    let done = 0;
+    progress(0, total, 'Uploading…');
+    for (const s of sheets) {
+      let parts = [], size = 2;
+      const flush = async () => {
+        if (!parts.length) return;
+        await sendText(`/api/upload/rows?upload=${uploadId}&report=${encodeURIComponent(s.cfg.key)}`, '[' + parts.join(',') + ']');
+        done += parts.length; parts = []; size = 2;
+        progress(done, total, `Uploading ${s.cfg.label}…`);
+      };
+      for (const row of s.rows) {
+        const j = JSON.stringify(row);
+        if (size + j.length + 1 > max) await flush();
+        parts.push(j); size += j.length + 1;
+      }
+      await flush();
+    }
+    progress(total, total, 'Saving…');
+    const fin = await api('/api/upload/finish', { uploadId });
+    const rows = fin.summary.reduce((a, r) => a + r.rows, 0);
+    $('progressText').textContent = `Done: ${fmtNum(rows)} rows from ${fin.summary.length} sheets saved.`;
+    say(`Upload complete: ${fmtNum(rows)} rows from ${fin.summary.length} sheets.`, 'ok');
+    uploadId = null;
+    up.file = null; up.sheets = [];
+    $('fileInput').value = '';
+    $('checkArea').classList.add('hidden');
+  } catch (err) {
+    if (uploadId) await api('/api/upload/cancel', { uploadId, reason: err.message }).catch(() => {});
+    $('progress').classList.add('hidden');
+    say(err.message + (uploadId ? ' Nothing was changed.' : ''), 'error');
+  } finally {
+    up.busy = false;
+    $('clearFileBtn').disabled = false;
+    window.removeEventListener('beforeunload', stopLeave);
+    loadUploadPage();
+  }
+}
+
+function stopLeave(e) { e.preventDefault(); e.returnValue = ''; }
+
+function clearFile() {
+  if (up.busy) return;
+  up.file = null; up.sheets = [];
+  $('fileInput').value = '';
+  $('checkArea').classList.add('hidden');
+  say('');
+}
+
+$('fileInput').addEventListener('change', e => handleFile(e.target.files[0]));
+$('uploadBtn').addEventListener('click', startUpload);
+$('clearFileBtn').addEventListener('click', () => { clearFile(); $('fileInput').click(); });
+const dz = $('dropzone');
+dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('fileInput').click(); } });
+['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
+dz.addEventListener('drop', e => handleFile(e.dataTransfer.files[0]));
+
 // ---------- shared helpers ----------
 function pager(id, total, page, onPage) {
   const el = $(id);
@@ -296,6 +572,11 @@ function fmtDate(s) {
   const d = new Date(iso);
   if (isNaN(d)) return esc(s);
   return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function fmtMonth(ym) {
+  const [y, m] = String(ym).split('-').map(Number);
+  if (!y || !m) return esc(ym);
+  return new Date(y, m - 1, 1).toLocaleString('en-IN', { month: 'short', year: 'numeric' });
 }
 function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }

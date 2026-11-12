@@ -98,6 +98,9 @@
         <button class="nav-btn" data-route="home" title="Home">
           <svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span>
         </button>
+        <button class="nav-btn" data-route="upload" data-role="admin" title="Upload data">
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg><span>Upload data</span>
+        </button>
         <button class="nav-btn" data-route="users" data-role="admin" title="Users">
           <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11a3 3 0 1 0 0-6M22 21c0-3-2-5-5-5.5"/></svg><span>Users</span>
         </button>
@@ -130,6 +133,54 @@
             <p class="note small">At least 8 characters, with letters and numbers.</p>
             <button class="btn primary" type="submit">Save new password</button>
           </form>
+        </section>
+
+        <!-- Upload data (admin) -->
+        <section class="view hidden" id="view-upload">
+          <div class="sec-title">Upload an Excel file <small>Sheets and columns are matched by name · uploading replaces only the months in the file</small></div>
+          <label class="dropzone" id="dropzone" tabindex="0">
+            <input type="file" id="fileInput" accept=".xlsx,.xlsm,.xls">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3"/></svg>
+            <span><b>Choose an Excel file</b> or drag it here</span>
+            <small>e.g. MIS Data.xlsx — the file is read on this computer; only the data rows are sent</small>
+          </label>
+
+          <div class="card check-card hidden" id="checkArea">
+            <div class="check-head">
+              <div><b id="checkFile"></b><div class="note small" id="checkInfo"></div></div>
+              <div class="check-actions">
+                <button class="btn" type="button" id="clearFileBtn">Choose another file</button>
+                <button class="btn primary" type="button" id="uploadBtn" disabled>Upload</button>
+              </div>
+            </div>
+            <div class="tbl-wrap">
+              <table>
+                <thead><tr><th>Excel sheet</th><th>Report</th><th class="num">Rows</th><th>Months</th><th>Check result</th></tr></thead>
+                <tbody id="checkRows"></tbody>
+              </table>
+            </div>
+            <div class="progress hidden" id="progress">
+              <div class="bar"><i id="progressBar"></i></div>
+              <span id="progressText"></span>
+            </div>
+          </div>
+
+          <div class="sec-title">Data in the system <small id="statusNote"></small></div>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr><th>Report</th><th>Excel sheet</th><th class="num">Rows</th><th>Months covered</th><th>Last updated</th><th>By</th></tr></thead>
+              <tbody id="statusRows"></tbody>
+            </table>
+          </div>
+
+          <div class="sec-title">Upload history <small>Last 100 uploads</small></div>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr><th>When</th><th>File</th><th>By</th><th>Status</th><th>Detail</th></tr></thead>
+              <tbody id="historyRows"></tbody>
+            </table>
+          </div>
+          <div class="pager" id="historyPager"></div>
         </section>
 
         <!-- Users (admin) -->

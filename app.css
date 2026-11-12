@@ -75,6 +75,28 @@ body { display: block; }
 .temp-box code { font: 700 16px Consolas, "Cascadia Mono", monospace; background: #fff; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line); letter-spacing: .04em; }
 td .actions { display: flex; gap: 6px; }
 
+/* ---------- Upload page ---------- */
+.dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center;
+  padding: 28px 16px; margin-bottom: 16px; background: #fff; border: 2px dashed var(--line); border-radius: 10px; cursor: pointer; transition: border-color .15s, background .15s; }
+.dropzone:hover, .dropzone:focus, .dropzone.drag { border-color: var(--brand); background: var(--brand-soft); outline: 0; }
+.dropzone input { display: none; }
+.dropzone svg { width: 34px; height: 34px; fill: none; stroke: var(--brand-deep); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.dropzone small { color: var(--muted); font-size: 12px; }
+.check-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
+.check-actions { display: flex; gap: 8px; }
+.check-card td { white-space: normal; vertical-align: top; }
+.check-card td:first-child, .check-card td:nth-child(2), .check-card td:nth-child(4) { white-space: nowrap; }
+.check-card td:last-child { min-width: 280px; }
+.msgs { margin: 4px 0 0; padding-left: 16px; font-size: 12px; }
+.msgs li.err { color: var(--bad); }
+.msgs li.warn { color: var(--warn); }
+.msgs li.info { color: var(--muted); }
+.progress { display: flex; align-items: center; gap: 12px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+.progress .bar { flex: 1; height: 8px; }
+.progress .bar i { width: 0; transition: width .2s; }
+tr.muted-row td { color: var(--muted); }
+td.wrap { white-space: normal; min-width: 220px; }
+
 /* ---------- Phone and tablet ---------- */
 @media (max-width: 860px) {
   .auth { grid-template-columns: 1fr; }
