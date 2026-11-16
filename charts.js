@@ -325,9 +325,44 @@ const Charts = (() => {
     area.appendChild(svg);
   }
 
+  // ---------- Gauge: actual against target (half circle, 0–120% so over-achievement shows) ----------
+  // g: { actual, target, label }  colours: ≥100% good, 90–100% orange, <90% critical
+  function gauge(host, g, opts) {
+    const { area, table } = shell(host, opts);
+    const pct = g.target ? g.actual / g.target : null;
+    table.innerHTML = `<table class="viz-table"><tbody>
+      <tr><td>${escHtml(opts.actualLabel || 'Actual')}</td><td class="num">${opts.fmt(g.actual)}</td></tr>
+      <tr><td>Target</td><td class="num">${g.target ? opts.fmt(g.target) : '–'}</td></tr>
+      <tr><td>Achieved</td><td class="num">${pct == null ? '–' : (pct * 100).toFixed(1) + '%'}</td></tr></tbody></table>`;
+    if (pct == null) { area.innerHTML = '<p class="empty">No target set for this selection.</p>'; return; }
+    const W = widthOf(area, host), H = 190, cx = W / 2, cy = 128, R = 96, r = 66, MAX = 1.2;
+    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: 'viz-svg', role: 'img', 'aria-label': opts.title });
+    const pt = (rad, f) => { const a = Math.PI * (1 - f); return [cx + rad * Math.cos(a), cy - rad * Math.sin(a)]; };
+    const band = (f1, f2, fill) => {
+      const [x1, y1] = pt(R, f1), [x2, y2] = pt(R, f2), [x3, y3] = pt(r, f2), [x4, y4] = pt(r, f1);
+      const large = f2 - f1 > 0.5 ? 1 : 0;
+      el('path', { d: `M${x1},${y1}A${R},${R} 0 ${large} 1 ${x2},${y2}L${x3},${y3}A${r},${r} 0 ${large} 0 ${x4},${y4}Z`, fill }, svg);
+    };
+    band(0, 1, 'var(--grid)');
+    const f = Math.min(pct, MAX) / MAX;
+    const color = pct >= 1 ? 'var(--good)' : pct >= 0.9 ? 'var(--s1)' : 'var(--bad)';
+    if (f > 0) band(0, Math.max(f, 0.004), color);
+    const [tx1, ty1] = pt(r - 6, 1 / MAX), [tx2, ty2] = pt(R + 6, 1 / MAX);   // target mark at 100%
+    el('line', { x1: tx1, y1: ty1, x2: tx2, y2: ty2, stroke: 'var(--ink)', 'stroke-width': 2 }, svg);
+    const [lx, ly] = pt(R + 10, 1 / MAX);
+    el('text', { x: lx + 2, y: ly - 2, 'text-anchor': 'start', class: 'viz-tick' }, svg).textContent = 'Target';
+    el('text', { x: cx, y: cy - 14, 'text-anchor': 'middle', class: 'viz-center' }, svg).textContent = (pct * 100).toFixed(1) + '%';
+    el('text', { x: cx, y: cy + 4, 'text-anchor': 'middle', class: 'viz-tick' }, svg).textContent = 'of target';
+    el('text', { x: cx - R, y: cy + 20, 'text-anchor': 'middle', class: 'viz-tick' }, svg).textContent = '0%';
+    el('text', { x: cx + R, y: cy + 20, 'text-anchor': 'middle', class: 'viz-tick' }, svg).textContent = '120%';
+    el('text', { x: cx, y: cy + 46, 'text-anchor': 'middle', class: 'viz-cat' }, svg).textContent =
+      `${opts.actualLabel || 'Actual'} ${opts.fmt(g.actual)}  ·  Target ${opts.fmt(g.target)}`;
+    area.appendChild(svg);
+  }
+
   function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, Math.max(1, n - 1)) + '…' : s; }
   function escHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
   function escAttr(s) { return escHtml(s); }
 
-  return { barsH, barsV, donut, columns, colorMap, compact, hideTip, SLOTS, OTHER, tableMode: {} };
+  return { barsH, barsV, donut, columns, gauge, colorMap, compact, hideTip, SLOTS, OTHER, tableMode: {} };
 })();

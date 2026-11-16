@@ -112,6 +112,14 @@ td .actions { display: flex; gap: 6px; }
    adjacent colour-blind ΔE ≥ 9.2, normal-vision ΔE ≥ 17.9; orange/teal < 3:1 → labels + table view kept) ---------- */
 :root { --s1: #e08a00; --s2: #3a8a5c; --s3: #1f4f8f; --s4: #8e5bd0; --s5: #d0567a; --s6: #2aa7b8; --s-other: #a3abb6; --absent: #c6cad0; }
 .viz-legend-t { fill: var(--muted); font-size: 11.5px; }
+/* KPI card with several comparisons (target, last month, last year, FY) */
+.tile .cmp { display: grid; grid-template-columns: auto 1fr; gap: 1px 8px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line-soft); font-size: 11.5px; }
+.tile .cmp dt { color: var(--muted); white-space: nowrap; }
+.tile .cmp dd { margin: 0; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tile .cmp .good { color: var(--good); font-weight: 600; } .tile .cmp .bad { color: var(--bad); font-weight: 600; } .tile .cmp .warn { color: var(--warn); font-weight: 600; }
+.rep-body .tiles.wide { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.chart-grid.gauge-row { grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr); }
+@media (max-width: 900px) { .chart-grid.gauge-row { grid-template-columns: 1fr; } }
 .viz-center { fill: var(--ink); font: 18px var(--font-black); }
 
 /* ---------- Module page: report list + report ---------- */

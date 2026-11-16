@@ -45,7 +45,8 @@ function harvest(repName) {
   const filters = Object.entries(rp.filters).filter(([, v]) => v != null).map(([k, v]) => `${rp.def.dims[k] || k}: ${k === 'date' ? fmtDay(v) : v}`);
   const tiles = [...document.querySelectorAll('#repTiles .tile')].map(t => ({
     k: t.querySelector('.k').innerText.trim(), v: t.querySelector('.v').innerText.trim(),
-    s: [...t.querySelectorAll('.s')].map(s => s.innerText.trim()),
+    s: [...t.querySelectorAll('.s')].map(s => s.innerText.trim())
+      .concat([...t.querySelectorAll('.cmp dt')].map(dt => `${dt.innerText.trim()}: ${dt.nextElementSibling ? dt.nextElementSibling.innerText.trim() : ''}`)),
   }));
   const charts = [...document.querySelectorAll('#repCharts .chart')].map(c => ({
     title: c.querySelector('.chart-title').childNodes[0].textContent.trim(),
@@ -57,6 +58,10 @@ function harvest(repName) {
     name: repName, module: MODULE_NAMES[rp.module], period: periodLabel(rp.period), compare: periodLabel(compareOf(rp.period)),
     lastUpdated: rp.lastUpdated ? fmtDate(rp.lastUpdated) : '–', filters, tiles, charts,
     summaryTitle, summary: tableModel($('repSummary').querySelector('table')),
+    extraTables: [...$('repSummary').querySelectorAll('table')].slice(1).map(t => {
+      const wrap = t.closest('.tbl-wrap'); let p = wrap && wrap.previousElementSibling;
+      return { title: p && p.classList.contains('sec-title') ? p.textContent.trim() : 'Table', tm: tableModel(t) };
+    }),
     note: (document.querySelector('#repBody .compare') || {}).textContent || '',
     footNote: ($('repSummary').querySelector('.foot-note') || {}).textContent || '',
   };
@@ -145,6 +150,7 @@ function reportSheet(X, h) {
     if (tm.total) rows.push(line(tm.total, XS.total));
   };
   addTable(h.summaryTitle, h.summary);
+  (h.extraTables || []).forEach(x => addTable(x.title, x.tm));
   if (h.footNote) put([h.footNote], XS.muted);
   h.charts.forEach(c => addTable(`Chart data – ${c.title}`, c.table));
 
@@ -301,6 +307,7 @@ async function reportPdfBlocks(h) {
       blocks.push({ html: `<div class="card pdf-summary">${i === 0 ? `<h2>${esc(h.summaryTitle)}</h2>` : `<h2>${esc(h.summaryTitle)} (continued)</h2>`}${tableHtml(part)}${last && h.footNote ? `<p class="note small">${esc(h.footNote)}</p>` : ''}</div>` });
     });
   }
+  for (const x of h.extraTables || []) blocks.push({ html: `<div class="card pdf-summary"><h2>${esc(x.title)}</h2>${tableHtml(x.tm)}</div>` });
   return blocks;
 }
 

@@ -8,7 +8,7 @@ const MODULE_REPORTS = {
     { key: 'cutting', name: 'Cutting', def: () => CuttingReport },
     // On hold (Mari, 16-11-2026): Fusing & Embroidery report hidden; code kept below to switch it back on later.
     // { key: 'fusing', name: 'Fusing & Embroidery', def: () => FusingReport },
-    { key: 'sewing', name: 'Sewing', def: () => SewingReport },
+    { key: 'sewing', name: 'Sewing', def: () => SewingV2 },          // MIS System data, targets and metrics
     { key: 'ironing', name: 'Ironing', def: () => IroningReport },
     { key: 'washing', name: 'Washing', def: () => WashingReport },
     { key: 'packing', name: 'Packing' },
@@ -473,13 +473,13 @@ function drawTrend(host, id, rows, valueKey, label, ctx, trendFrom) {
 }
 
 // Daily columns with a dashed "average per day" line
-function drawDaily(host, id, rows, valueKey, label, ctx, f) {
+function drawDaily(host, id, rows, valueKey, label, ctx, f, clickable = true) {
   const by = groupSum(rows.filter(r => r.date), 'date', valueKey, false).sort((a, b) => (a.key < b.key ? -1 : 1));
   const worked = by.filter(x => x.value > 0);
   const avg = worked.length ? sum(worked, x => x.value) / worked.length : 0;
   Charts.barsV(host, by.map(x => ({ ...x, label: fmtDay(x.key), short: x.key.slice(8), hi: f.date ? f.date === x.key : false })),
-    { id, title: `Daily ${label}`, sub: monthsBetween(ctx.period.from, ctx.period.to) > 1 ? 'All days in the period' : 'Click a day to filter',
-      keyLabel: 'Date', valueLabel: label, fmt: n0, avg: avg ? { value: avg, label: 'Avg / day' } : null, onClick: d => setFilter('date', d.key) });
+    { id, title: `Daily ${label}`, sub: monthsBetween(ctx.period.from, ctx.period.to) > 1 ? 'All days in the period' : (clickable ? 'Click a day to filter' : ''),
+      keyLabel: 'Date', valueLabel: label, fmt: n0, avg: avg ? { value: avg, label: 'Avg / day' } : null, onClick: clickable ? d => setFilter('date', d.key) : null });
 }
 
 // Present vs absent (average per working day) for each unit / floor, stacked
