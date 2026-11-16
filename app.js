@@ -362,7 +362,7 @@ function drawDataStatus(reports) {
   $('statusRows').innerHTML = reports.map(r => `<tr class="${r.enabled ? '' : 'muted-row'}">
     <td>${esc(r.label)}</td><td>${esc(r.sheet)}</td>
     <td class="num">${r.rows ? fmtNum(r.rows) : '–'}</td>
-    <td>${r.firstMonth ? `${fmtMonth(r.firstMonth)} – ${fmtMonth(r.lastMonth)}` : (r.enabled ? '<span class="note">No data yet</span>' : `<span class="note">${esc(r.note || 'Not loaded')}</span>`)}</td>
+    <td>${r.firstMonth === '1900-01' ? 'Master list' : r.firstMonth ? `${fmtMonth(r.firstMonth)} – ${fmtMonth(r.lastMonth)}` : (r.enabled ? '<span class="note">No data yet</span>' : `<span class="note">${esc(r.note || 'Not loaded')}</span>`)}</td>
     <td>${r.lastUpdated ? fmtDate(r.lastUpdated) : '–'}</td><td>${esc(r.updatedBy || '')}</td></tr>`).join('');
 }
 
@@ -436,8 +436,10 @@ function parseSheet(X, ws, cfg) {
     if (seen[key]) out.errors.push(`Two columns are named "${k.name}" (columns ${seen[key]} and ${col}). Please rename one of them in the Excel file.`);
     else seen[key] = col;
   }
-  for (const need of [cfg.monthCol, cfg.dateCol]) if (!out.headers.includes(need)) out.errors.push(`Column "${need}" is missing.`);
+  for (const need of [cfg.monthCol, cfg.dateCol].filter(Boolean)) if (!out.headers.includes(need)) out.errors.push(`Column "${need}" is missing.`);
   if (out.errors.length) return out;
+  const isMaster = cfg.kind === 'master';
+  const monthFrom = cfg.monthCol || cfg.dateCol;      // new layout: the month comes from the row's date
 
   const blankHits = {};
   for (let r = hr + 1; r <= R.e.r; r++) {
@@ -446,7 +448,8 @@ function parseSheet(X, ws, cfg) {
     for (const k of named) { const v = val(at(r, k.c)); if (v !== null) { obj[k.name] = v; any = true; } }
     for (const k of blank) { if (val(at(r, k.c)) !== null) blankHits[k.c] = (blankHits[k.c] || 0) + 1; }
     if (!any) continue;
-    const m = obj[cfg.monthCol];
+    if (isMaster) { out.rows.push(['1900-01', null, obj]); continue; }   // master lists: no month, whole list replaced
+    const m = obj[monthFrom];
     if (typeof m !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(m)) { out.noMonth++; continue; }
     const month = m.slice(0, 7);
     const d = obj[cfg.dateCol];
@@ -456,7 +459,8 @@ function parseSheet(X, ws, cfg) {
   for (const [c, n] of Object.entries(blankHits)) {
     out.warnings.push(`Column ${X.utils.encode_col(Number(c))} has no header; its ${fmtNum(n)} values will not be loaded.`);
   }
-  if (out.noMonth) out.warnings.push(`${fmtNum(out.noMonth)} rows have no valid "${cfg.monthCol}" date and will be skipped.`);
+  if (out.noMonth) out.warnings.push(`${fmtNum(out.noMonth)} rows have no valid "${monthFrom}" date and will be skipped.`);
+  if (isMaster) out.info = ['Master list: the whole list is replaced by this upload.'];
   return out;
 }
 
@@ -520,7 +524,7 @@ function drawCheck() {
     }
     return `<tr class="${s.skip ? 'muted-row' : ''}"><td>${esc(s.sheet)}</td><td>${s.cfg ? esc(s.cfg.label) : '–'}</td>
       <td class="num">${s.skip ? '–' : fmtNum(s.rows.length)}</td>
-      <td>${months.length ? `${fmtMonth(months[0])} – ${fmtMonth(months.at(-1))} <span class="note">(${months.length})</span>` : '–'}</td><td>${result}</td></tr>`;
+      <td>${s.cfg && s.cfg.kind === 'master' ? 'Master list' : months.length ? `${fmtMonth(months[0])} – ${fmtMonth(months.at(-1))} <span class="note">(${months.length})</span>` : '–'}</td><td>${result}</td></tr>`;
   }).join('');
 }
 
