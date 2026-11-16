@@ -16,6 +16,7 @@ const MODULE_REPORTS = {
 };
 const MODULE_NAMES = { production: 'Production' };
 const REPNAV_KEY = 'mis.repnavOpen';
+const CMP_KEY = 'mis.compareWith';
 
 // ---------- small helpers ----------
 const n0 = v => (v == null || isNaN(v) ? '–' : Math.round(v).toLocaleString('en-IN'));
@@ -127,18 +128,24 @@ function drawReport(data) {
   const units = def.units ? def.units(data) : [];
   const fk = def.filterKey || 'unit', fl = def.dims[fk] || 'Unit';
   const cmp = compareOf(rp.period);
+  // "Compare with" (reports that support it): previous period, same period last year, or target
+  const CMP_MODES = { prev: 'Previous period', ly: 'Same period last year', target: 'Target' };
+  if (!rp.compareMode) rp.compareMode = store(CMP_KEY) || 'prev';
+  const mode = def.compareModes ? rp.compareMode : 'prev';
+  const cmpText = mode === 'target' ? 'compared with target' : `compared with ${periodLabel(mode === 'ly' ? { from: addMonths(rp.period.from, -12), to: addMonths(rp.period.to, -12) } : cmp)}`;
 
   $('repBody').innerHTML = `
     <header class="rep-filters">
       <div class="filters">
         <label>Period <select id="fPeriod">${hasCur ? '' : `<option value="${cur}" selected>${esc(periodLabel(rp.period))}</option>`}${optHtml}</select></label>
+        ${def.compareModes ? `<label>Compare with <select id="fCmp">${Object.entries(CMP_MODES).map(([k, v]) => `<option value="${k}" ${k === mode ? 'selected' : ''}>${v}</option>`).join('')}</select></label>` : ''}
         ${units.length ? `<label>${esc(fl)} <select id="fUnit"><option value="">All</option>${units.map(u => `<option ${rp.filters[fk] === u ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></label>` : ''}
         ${Object.values(rp.filters).some(v => v != null) ? '<button class="link" id="fClear" type="button">Clear filters</button>' : ''}
         <span class="updated">Last updated ${rp.lastUpdated ? fmtDate(rp.lastUpdated) : '–'}</span>
         ${downloadMenuHtml()}
       </div>
     </header>
-    <p class="compare">${esc(periodLabel(rp.period))} compared with ${esc(periodLabel(cmp))}${def.note ? ' · ' + def.note : ''}</p>
+    <p class="compare">${esc(periodLabel(rp.period))} ${esc(cmpText)}${def.note ? ' · ' + def.note : ''}</p>
     ${filterChips ? `<div class="chips">${filterChips}<span class="note small">Click a bar again to remove its filter.</span></div>` : '<p class="note small hint">Tip: click any bar or table row to filter the whole page.</p>'}
     <div class="tiles" id="repTiles"></div>
     <div id="repCharts"></div>
@@ -147,11 +154,12 @@ function drawReport(data) {
 
   $('fPeriod').onchange = e => { const [from, to] = e.target.value.split(':'); setPeriod({ from, to }); };
   if ($('fUnit')) $('fUnit').onchange = e => setFilter(fk, e.target.value || null, true);
+  if ($('fCmp')) $('fCmp').onchange = e => { rp.compareMode = e.target.value; store(CMP_KEY, rp.compareMode); drawReport(data); };
   if ($('fClear')) $('fClear').onclick = () => { rp.filters = {}; drawReport(data); };
   document.querySelectorAll('[data-clear]').forEach(b => b.onclick = () => setFilter(b.dataset.clear, null, true));
   wireDownloadMenu();
 
-  def.draw(data, { period: rp.period, compare: cmp, filters: rp.filters });
+  def.draw(data, { period: rp.period, compare: cmp, compareMode: mode, filters: rp.filters });
   if (rp.details) drawDetails();
 }
 

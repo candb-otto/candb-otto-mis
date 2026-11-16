@@ -7,6 +7,7 @@
 const XLSX_STYLE_URL = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
 const HTML2CANVAS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
 const JSPDF_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+const PPTX_URL = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js';
 const BRAND = 'F8A51A', INK = '0B2014', BAND = 'E6F0E9', SOFT = 'FFF3DC', MUTED = '5F6B7A';
 // Indian grouping in Excel: 1,23,45,678
 const IN_FMT = '[>=10000000]##\\,##\\,##\\,##0;[>=100000]##\\,##\\,##0;##,##0';
@@ -55,7 +56,7 @@ function harvest(repName) {
   }));
   const summaryTitle = ($('repSummary').querySelector('h2') || {}).textContent || 'Summary';
   return {
-    name: repName, module: MODULE_NAMES[rp.module], period: periodLabel(rp.period), compare: periodLabel(compareOf(rp.period)),
+    name: repName, module: MODULE_NAMES[rp.module], period: periodLabel(rp.period), compare: rp.def && rp.def.compareModes && rp.compareMode === 'target' ? 'Target' : rp.def && rp.def.compareModes && rp.compareMode === 'ly' ? periodLabel({ from: addMonths(rp.period.from, -12), to: addMonths(rp.period.to, -12) }) : periodLabel(compareOf(rp.period)),
     lastUpdated: rp.lastUpdated ? fmtDate(rp.lastUpdated) : '–', filters, tiles, charts,
     summaryTitle, summary: tableModel($('repSummary').querySelector('table')),
     extraTables: [...$('repSummary').querySelectorAll('table')].slice(1).map(t => {
@@ -247,6 +248,23 @@ function svgForPdf(svg) {
 }
 
 // Turns a chart into a PNG picture (drawn at 2x) so the PDF shows it exactly as on screen
+function svgToPng(svg) {
+  return new Promise(resolve => {
+    if (!svg) return resolve(null);
+    const w = Number(svg.getAttribute('width')), h = Number(svg.getAttribute('height'));
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = w * 2; c.height = h * 2;
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      resolve({ data: c.toDataURL('image/png'), w, h });
+    };
+    img.onerror = () => resolve(null);
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgForPdf(svg));
+  });
+}
 function svgToImg(svg) {
   return new Promise(resolve => {
     if (!svg) return resolve('');
@@ -365,6 +383,106 @@ async function downloadPdf(scope) {
   finally { busy(null); wrap.remove(); }
 }
 
+// ---------- PowerPoint ----------
+// Widescreen slides in the C&B look: masthead on every slide, cards as boxes, charts as pictures, tables as real tables.
+async function ensurePptx() { if (!window.PptxGenJS) await loadScript(PPTX_URL); return window.PptxGenJS; }
+async function dataUrlOf(src) {
+  const b = await (await fetch(src)).blob();
+  return new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); });
+}
+// Test hook: the local test page can replace this to capture the file
+async function savePpt(pptx, fileName) { await pptx.writeFile({ fileName }); }
+
+async function downloadPpt(scope) {
+  try {
+    busy('Preparing PowerPoint…');
+    const Pptx = await ensurePptx();
+    const parts = scope === 'module' ? await harvestModule() : [harvest(MODULE_REPORTS[rp.module].find(r => r.key === rp.report).name)];
+    busy('Writing PowerPoint…');
+    const [otto, cb] = await Promise.all([dataUrlOf('img/otto-logo.png'), dataUrlOf('img/cb-logo.jpg')]);
+    const pptx = new Pptx();
+    pptx.layout = 'LAYOUT_WIDE';              // 13.33 × 7.5 in
+    pptx.author = 'MIS Master System'; pptx.company = 'Otto Clothing Pvt Ltd';
+    const INKc = '0B2014', MUTEDc = '5F6B7A', ORANGEc = 'F8A51A', BANDc = 'E6F0E9', LINEc = 'DCE2EA', FONTF = 'Segoe UI';
+    const W = 13.33, M = 0.4;
+    const printed = new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    let slideNo = 0;
+    const newSlide = (h, subtitle) => {
+      const s = pptx.addSlide(); slideNo++;
+      s.background = { color: 'FFFFFF' };
+      s.addImage({ data: otto, x: M, y: 0.18, w: 0.62, h: 0.62 });
+      s.addText('Otto Clothing Pvt Ltd', { x: 2, y: 0.2, w: W - 4, h: 0.55, align: 'center', fontFace: 'Segoe UI Black', fontSize: 22, color: INKc, bold: true });
+      s.addImage({ data: cb, x: W - M - 1.6, y: 0.27, w: 1.6, h: 0.51 });
+      s.addShape(pptx.ShapeType.line, { x: M, y: 0.92, w: W - 2 * M, h: 0, line: { color: ORANGEc, width: 2.5 } });
+      s.addText(`${h.module} – ${h.name}${subtitle ? '  ·  ' + subtitle : ''}`, { x: M, y: 1.0, w: W - 2 * M, h: 0.45, align: 'center', fontFace: FONTF, fontSize: 18, bold: true, color: INKc });
+      s.addText(`MIS Master System · Prepared by C&B Consulting & Beyond · ${printed}`, { x: M, y: 7.1, w: 9, h: 0.3, fontFace: FONTF, fontSize: 9, color: MUTEDc });
+      s.addText(String(slideNo), { x: W - M - 1, y: 7.1, w: 1, h: 0.3, align: 'right', fontFace: FONTF, fontSize: 9, color: MUTEDc });
+      return s;
+    };
+    for (const h of parts) {
+      // 1. cards, up to 10 per slide
+      const perSlide = 10;
+      for (let i = 0; i < Math.max(1, h.tiles.length); i += perSlide) {
+        const s = newSlide(h, i ? 'Key figures (continued)' : '');
+        s.addShape(pptx.ShapeType.rect, { x: M, y: 1.55, w: W - 2 * M, h: 0.4, fill: { color: BANDc }, line: { color: BANDc } });
+        s.addText([
+          { text: 'Period: ', options: { bold: true } }, { text: h.period + '     ' },
+          { text: 'Compared with: ', options: { bold: true } }, { text: h.compare + '     ' },
+          ...(h.filters.length ? [{ text: 'Filters: ', options: { bold: true } }, { text: h.filters.join(', ') + '     ' }] : []),
+          { text: 'Last updated ' + h.lastUpdated, options: { color: MUTEDc } },
+        ], { x: M + 0.1, y: 1.55, w: W - 2 * M - 0.2, h: 0.4, fontFace: FONTF, fontSize: 11, color: INKc, valign: 'middle' });
+        const tiles = h.tiles.slice(i, i + perSlide);
+        const cols = 5, gap = 0.15, tw = (W - 2 * M - gap * (cols - 1)) / cols, th = 2.35;
+        tiles.forEach((t, k) => {
+          const x = M + (k % cols) * (tw + gap), y = 2.15 + Math.floor(k / cols) * (th + gap);
+          s.addShape(pptx.ShapeType.roundRect, { x, y, w: tw, h: th, fill: { color: 'FFFFFF' }, line: { color: LINEc, width: 1 }, rectRadius: 0.08 });
+          s.addText(t.k, { x: x + 0.12, y: y + 0.08, w: tw - 0.24, h: 0.35, fontFace: FONTF, fontSize: 11, bold: true, color: INKc });
+          s.addText(t.v, { x: x + 0.12, y: y + 0.45, w: tw - 0.24, h: 0.55, fontFace: 'Segoe UI Black', fontSize: 22, bold: true, color: INKc });
+          if (t.s.length) s.addText(t.s.map(line => ({ text: line, options: { breakLine: true, color: /▲/.test(line) ? '2E7D4F' : /▼/.test(line) ? 'C8463B' : MUTEDc } })),
+            { x: x + 0.12, y: y + 1.05, w: tw - 0.24, h: th - 1.12, fontFace: FONTF, fontSize: 9.5, valign: 'top' });
+        });
+      }
+      // 2. charts, two per slide
+      const pics = await Promise.all(h.charts.map(c => svgToPng(c.svg)));
+      for (let i = 0; i < h.charts.length; i += 2) {
+        const s = newSlide(h, 'Charts');
+        h.charts.slice(i, i + 2).forEach((c, k) => {
+          const bw = (W - 2 * M) / 2 - 0.1, x = M + k * (bw + 0.2);
+          s.addText(c.title, { x, y: 1.6, w: bw, h: 0.4, fontFace: FONTF, fontSize: 13, bold: true, color: INKc });
+          s.addShape(pptx.ShapeType.line, { x, y: 2.0, w: bw, h: 0, line: { color: ORANGEc, width: 1.5 } });
+          const pic = pics[i + k];
+          if (pic) {
+            const sc = Math.min(bw / (pic.w / 96), 4.8 / (pic.h / 96));
+            const w = pic.w / 96 * sc, hh = pic.h / 96 * sc;
+            s.addImage({ data: pic.data, x: x + (bw - w) / 2, y: 2.15, w, h: hh });
+          }
+        });
+      }
+      // 3. tables (summary and any extra tables), 14 rows per slide
+      const tables = [{ title: h.summaryTitle, tm: h.summary, note: h.footNote }, ...(h.extraTables || [])].filter(t => t.tm);
+      for (const t of tables) {
+        const body = t.tm.body.concat(t.tm.total ? [t.tm.total] : []);
+        for (let i = 0; i < Math.max(1, body.length); i += 14) {
+          const s = newSlide(h, i ? t.title + ' (continued)' : t.title);
+          const chunk = body.slice(i, i + 14);
+          const head = t.tm.head.map((c, j) => ({ text: c, options: { bold: true, fill: { color: ORANGEc }, color: INKc, align: t.tm.num[j] ? 'right' : 'left' } }));
+          const rows = chunk.map(r => {
+            const isTotal = t.tm.total && r === t.tm.total;
+            return r.map((v, j) => ({ text: String(v), options: { align: t.tm.num[j] ? 'right' : 'left', bold: !!isTotal,
+              fill: { color: isTotal ? 'FFF3DC' : 'FFFFFF' }, color: /^▲/.test(v) ? '2E7D4F' : /^▼/.test(v) ? 'C8463B' : INKc } }));
+          });
+          s.addTable([head, ...rows], { x: M, y: 1.65, w: W - 2 * M, fontFace: FONTF, fontSize: 10.5, border: { type: 'solid', color: 'ECEEEF', pt: 0.75 }, rowH: 0.34, autoPage: false });
+          if (t.note && i + 14 >= body.length) s.addText(t.note, { x: M, y: 6.6, w: W - 2 * M, h: 0.4, fontFace: FONTF, fontSize: 9, color: MUTEDc });
+        }
+      }
+    }
+    const name = scope === 'module' ? fileBase('All reports') : fileBase(parts[0].name);
+    await savePpt(pptx, `${name}.pptx`);
+    await logDownload('PowerPoint', scope);
+  } catch (err) { say(err.message || 'Could not make the PowerPoint.', 'error'); }
+  finally { busy(null); }
+}
+
 // Records the download in the activity log (best effort)
 async function logDownload(kind, scope) { try { await api('/api/log-download', { kind, module: rp.module, report: scope === 'module' ? 'all reports' : rp.report, period: periodLabel(rp.period) }); } catch { /* not important */ } }
 
@@ -377,9 +495,11 @@ function downloadMenuHtml() {
       <div class="dl-group">This report</div>
       <button role="menuitem" data-dl="excel:report">Excel <small>summary, charts data, all rows</small></button>
       <button role="menuitem" data-dl="pdf:report">PDF <small>as on screen</small></button>
+      <button role="menuitem" data-dl="ppt:report">PowerPoint <small>slides for meetings</small></button>
       <div class="dl-group">All ${esc(MODULE_NAMES[rp.module])} reports</div>
       <button role="menuitem" data-dl="excel:module">Excel <small>one sheet per report</small></button>
       <button role="menuitem" data-dl="pdf:module">PDF <small>one page set per report</small></button>
+      <button role="menuitem" data-dl="ppt:module">PowerPoint <small>slides for every report</small></button>
     </div></div>`;
 }
 
@@ -390,7 +510,7 @@ function wireDownloadMenu() {
   menu.querySelectorAll('[data-dl]').forEach(b => b.onclick = () => {
     menu.classList.add('hidden');
     const [kind, scope] = b.dataset.dl.split(':');
-    if (kind === 'excel') downloadExcel(scope); else downloadPdf(scope);
+    if (kind === 'excel') downloadExcel(scope); else if (kind === 'ppt') downloadPpt(scope); else downloadPdf(scope);
   });
 }
 document.addEventListener('click', e => { const m = $('dlMenu'); if (m && !e.target.closest('.dl')) m.classList.add('hidden'); });

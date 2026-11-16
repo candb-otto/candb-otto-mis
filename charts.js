@@ -340,7 +340,7 @@ const Charts = (() => {
     const pt = (rad, f) => { const a = Math.PI * (1 - f); return [cx + rad * Math.cos(a), cy - rad * Math.sin(a)]; };
     const band = (f1, f2, fill) => {
       const [x1, y1] = pt(R, f1), [x2, y2] = pt(R, f2), [x3, y3] = pt(r, f2), [x4, y4] = pt(r, f1);
-      const large = f2 - f1 > 0.5 ? 1 : 0;
+      const large = 0;   // a half circle never needs the long way round
       el('path', { d: `M${x1},${y1}A${R},${R} 0 ${large} 1 ${x2},${y2}L${x3},${y3}A${r},${r} 0 ${large} 0 ${x4},${y4}Z`, fill }, svg);
     };
     band(0, 1, 'var(--grid)');

@@ -31,6 +31,7 @@ const SewingV2 = {
   sources: ['ms_sewing_lot', 'ms_sewing_daily', 'ms_sewing_ot', 'ms_targets'],
   dims: { unit: 'Unit', category: 'Category' },
   filterKey: 'unit',
+  compareModes: true,
   detailSources: [
     { report: 'ms_sewing_lot', title: 'Sewing lots', map: { unit: 'Unit', category: 'Category' },
       view: r => ({ ...r, Category: (SEW.items[String(r.Item || '').toUpperCase()] || {}).cat || '(none)' }) },
@@ -137,40 +138,38 @@ const SewingV2 = {
   draw(data, ctx) {
     const f = ctx.filters, p = ctx.period;
     const fyR = { from: data.fy.start > p.from ? p.from : data.fy.start, to: p.to };
-    const lyR = shiftP(p, -12);
-    const C = this.metrics(data, p, f), LM = this.metrics(data, ctx.compare, f), LY = this.metrics(data, lyR, f), FY = this.metrics(data, fyR, f);
-    const lm = shortPeriod(ctx.compare), ly = shortPeriod(lyR), fyl = data.fy.label;
+    const mode = ctx.compareMode || 'prev';                       // prev | ly | target  (top-bar "Compare with")
+    const refR = mode === 'ly' ? shiftP(p, -12) : ctx.compare;
+    const C = this.metrics(data, p, f), R = this.metrics(data, refR, f), FY = this.metrics(data, fyR, f);
+    const refLabel = shortPeriod(refR), fyl = data.fy.label;
     const na = 'Not split by category';
+    // One comparison line per card, following the "Compare with" choice.
+    //   cur/ref: values for this period and the comparison period; tgt: [target text, achievement 0..n] for Target mode
+    const cmp = (cur, ref, tgt, lowerIsBetter) => {
+      if (mode === 'target') return tgt ? [['Target', tgt[1] == null ? tgt[0] : `${tgt[0]} · ${achHtml(tgt[1])}`]] : [['Target', '<span class="note">no target</span>']];
+      return [[`vs ${refLabel}`, chgHtml(cur, ref, lowerIsBetter)]];
+    };
+    const presentTarget = sum(data.targets.filter(t => !t.eqTarget && t.month >= p.from && t.month <= p.to && (f.unit == null || t.unit === f.unit)), t => t.present) / Math.max(1, monthsBetween(p.from, p.to));
 
     $('repTiles').classList.add('wide');
     $('repTiles').innerHTML = [
-      cmpTile('Sewing Qty', n0(C.qty), '', [
-        ['Target', C.target ? `${n0(C.target)} · ${achHtml(C.ach)}` : '–'],
-        [`vs ${lm}`, chgHtml(C.qty, LM.qty)], [`vs ${ly}`, chgHtml(C.qty, LY.qty)],
-        [`${fyl} to date`, `${n0(FY.qty)}${FY.target ? ' · ' + achHtml(FY.ach) : ''}`]]),
-      cmpTile('Equivalent Qty', n0(C.eq), `Base ${data.base} pcs per tailor per day`, [
-        ['Target', C.eqTarget ? `${n0(C.eqTarget)} · ${achHtml(C.eq / C.eqTarget)}` : '<span class="note">not set</span>'],
-        [`vs ${lm}`, chgHtml(C.eq, LM.eq)], [`vs ${ly}`, chgHtml(C.eq, LY.eq)], [`${fyl} to date`, n0(FY.eq)]]),
-      cmpTile('Target Achieved', C.ach == null ? '–' : pctTxt(C.ach), C.target ? `${n0(C.qty)} of ${n0(C.target)}` : (f.category ? na : 'No target set'), [
-        [`${lm}`, pctTxt(LM.ach)], [`${fyl} to date`, achHtml(FY.ach)]]),
-      cmpTile('Average per Working Day', n0(C.avgWD), `${C.wd} working days`, [
-        ['Target per day', n0(C.tgtWD)], [`vs ${lm}`, chgHtml(C.avgWD, LM.avgWD)]]),
-      cmpTile('Efficiency', C.eff == null ? '–' : pctTxt(C.eff), f.category ? na : 'Equivalent qty per tailor-day (incl. OT) ÷ ' + data.base, [
-        ['Target', '100%'], [`vs ${lm}`, chgHtml(C.eff, LM.eff)], [`${fyl} to date`, pctTxt(FY.eff)]]),
-      cmpTile('Tailors Present / Day', n0(C.presentDay), f.category ? na : `Present ${pctTxt(C.presentPct)} · Absent ${C.presentPct == null ? '–' : pctTxt(1 - C.presentPct)}`, [
-        [`vs ${lm}`, chgHtml(C.presentDay, LM.presentDay)], [`${fyl} to date`, `${n0(FY.presentDay)} · ${pctTxt(FY.presentPct)}`]]),
-      cmpTile('Pieces per Tailor / Day', n1(C.ppt), f.category ? na : 'Qty ÷ tailors present', [
-        [`vs ${lm}`, chgHtml(C.ppt, LM.ppt)], [`vs ${ly}`, chgHtml(C.ppt, LY.ppt)]]),
-      cmpTile('OT Head Count / Day', n1(C.otDay), f.category ? na : `${n0(C.hc)} head count on ${C.otDays} OT days`, [
-        [`vs ${lm}`, chgHtml(C.otDay, LM.otDay, true)]]),
-      cmpTile('Equ. Pcs per Machine / Day', n1(C.eqPerMachine), `${n0(C.mc)} machines${C.used ? ` · idle ${n0(C.idle)} machine-days` : ' (machines used not entered yet)'}`, [
-        ['Target', String(data.base)], [`vs ${lm}`, chgHtml(C.eqPerMachine, LM.eqPerMachine)],
-        ['Capacity used', pctTxt(C.capUtil)], [`${fyl} to date`, n1(FY.eqPerMachine)]]),
+      cmpTile('Sewing Qty', n0(C.qty), `${fyl} to date: ${n0(FY.qty)}`, cmp(C.qty, R.qty, C.target ? [n0(C.target), C.ach] : null)),
+      cmpTile('Equivalent Qty', n0(C.eq), `Base ${data.base} pcs per tailor per day`, cmp(C.eq, R.eq, C.eqTarget ? [n0(C.eqTarget), C.eq / C.eqTarget] : null)),
+      cmpTile('Target Achieved', C.ach == null ? '–' : pctTxt(C.ach), C.target ? `${n0(C.qty)} of ${n0(C.target)}` : (f.category ? na : 'No target set'),
+        mode === 'target' ? [['Target', '100%']] : [[`${refLabel}`, pctTxt(R.ach)]]),
+      cmpTile('Average per Working Day', n0(C.avgWD), `${C.wd} working days`, cmp(C.avgWD, R.avgWD, C.tgtWD ? [n0(C.tgtWD) + ' / day', C.avgWD / C.tgtWD] : null)),
+      cmpTile('Efficiency', C.eff == null ? '–' : pctTxt(C.eff), f.category ? na : 'Equivalent qty per tailor-day (incl. OT) ÷ ' + data.base, cmp(C.eff, R.eff, C.eff == null ? null : ['100%', C.eff])),
+      cmpTile('Tailors Present / Day', n0(C.presentDay), f.category ? na : `Present ${pctTxt(C.presentPct)} · Absent ${C.presentPct == null ? '–' : pctTxt(1 - C.presentPct)}`,
+        cmp(C.presentDay, R.presentDay, presentTarget && C.presentDay != null ? [n0(presentTarget), C.presentDay / presentTarget] : null)),
+      cmpTile('Pieces per Tailor / Day', n1(C.ppt), f.category ? na : 'Qty ÷ tailors present', cmp(C.ppt, R.ppt, null)),
+      cmpTile('OT Head Count / Day', n1(C.otDay), f.category ? na : `${n0(C.hc)} head count on ${C.otDays} OT days`, cmp(C.otDay, R.otDay, null, true)),
+      cmpTile('Equ. Pcs per Machine / Day', n1(C.eqPerMachine), `${n0(C.mc)} machines · capacity used ${pctTxt(C.capUtil)}${C.used ? ` · idle ${n0(C.idle)} machine-days` : ''}`,
+        cmp(C.eqPerMachine, R.eqPerMachine, C.eqPerMachine == null ? null : [String(data.base), C.eqPerMachine / data.base])),
     ].join('');
 
     $('repCharts').innerHTML = `<div class="chart-grid gauge-row">${chartBox('cGauge') + chartBox('cEff')}</div>
       <div class="chart-grid">${chartBox('cTrend') + chartBox('cDaily')}</div>
-      <div class="chart-grid three">${chartBox('cAtt') + chartBox('cCat') + chartBox('cOT')}</div>`;
+      <div class="chart-grid">${chartBox('cAtt') + chartBox('cCat')}</div>`;
 
     // 1. Target vs actual gauge
     Charts.gauge($('cGauge'), { actual: C.qty, target: C.target }, { id: 'sew2-gauge', title: 'Target vs Actual', sub: periodLabel(p), actualLabel: 'Actual', fmt: n0 });
@@ -202,25 +201,20 @@ const SewingV2 = {
     Charts.donut($('cCat'), cItems, { id: 'sew2-cat', title: 'Sewing Qty by Category', keyLabel: 'Category', valueLabel: 'Sewing Qty', fmt: n0, centerLabel: 'Sewing Qty',
       selected: f.category ?? null, onClick: d => { if (!d.other) setFilter('category', d.key); } });
 
-    // 7. OT head count per day by unit
-    const otItems = unitsAll.filter(u => this.metrics(data, p, { unit: u }).hc > 0).map(u => { const m = this.metrics(data, p, { unit: u }); return { key: u, label: u, value: m.otDay || 0, color: ucolors[u] }; });
-    Charts.barsH($('cOT'), otItems, { id: 'sew2-ot', title: 'OT Head Count per Day', keyLabel: 'Unit', valueLabel: 'OT head count / day', fmt: n1, valueText: d => n1(d.value),
-      selected: f.unit ?? null, onClick: d => setFilter('unit', d.key) });
-
     // Summary by unit + FY to date
-    const urows = unitsAll.map(u => ({ u, c: this.metrics(data, p, { ...f, unit: u }), l: this.metrics(data, ctx.compare, { ...f, unit: u }), y: this.metrics(data, fyR, { ...f, unit: u }) }))
+    const urows = unitsAll.map(u => ({ u, c: this.metrics(data, p, { ...f, unit: u }), l: this.metrics(data, refR, { ...f, unit: u }), y: this.metrics(data, fyR, { ...f, unit: u }) }))
       .filter(x => x.c.qty || x.c.present || x.c.target);
     const td = v => `<td class="num">${v}</td>`;
     const line = (name, c, l, sel) => `<tr class="${name !== 'Total' ? 'click' : 'total'} ${sel ? 'sel' : ''}" ${name !== 'Total' ? `data-k="${esc(name)}"` : ''}><td>${esc(name)}</td>
-      ${td(n0(c.qty))}${td(n0(c.eq))}${td(c.target ? n0(c.target) : '–')}${td(achHtml(c.ach))}${td(chgHtml(c.qty, l.qty))}${td(n0(c.avgWD))}
+      ${td(n0(c.qty))}${td(n0(c.eq))}${td(c.target ? n0(c.target) : '–')}${td(achHtml(c.ach))}${mode === 'target' ? '' : td(chgHtml(c.qty, l.qty))}${td(n0(c.avgWD))}
       ${td(n0(c.presentDay))}${td(pctTxt(c.presentPct))}${td(n1(c.ppt))}${td(n1(c.otDay))}${td(c.eff == null ? '–' : achHtml(c.eff))}</tr>`;
     const fyLine = (name, y) => { const diff = y.target ? y.qty - y.target : null; return `<tr class="${name === 'Total' ? 'total' : ''}"><td>${esc(name)}</td>${td(n0(y.qty))}${td(y.target ? n0(y.target) : '–')}${td(achHtml(y.ach))}${td(diff == null ? '–' : `<span class="${diff >= 0 ? 'good' : 'bad'}">${diff >= 0 ? '+' : ''}${n0(diff)}</span>`)}${td(n0(y.eq))}${td(pctTxt(y.eff))}</tr>`; };
     $('repSummary').innerHTML = `<div class="sum-head"><h2>Summary by Unit – ${esc(periodLabel(p))}</h2><button class="btn primary" id="btnDetails" type="button">View Details</button></div>
       <div class="tbl-wrap"><table>
-        <thead><tr><th>Unit</th><th class="num">Sewing Qty</th><th class="num">Equ. Qty</th><th class="num">Target</th><th class="num">Achieved</th><th class="num">vs ${esc(lm)}</th>
+        <thead><tr><th>Unit</th><th class="num">Sewing Qty</th><th class="num">Equ. Qty</th><th class="num">Target</th><th class="num">Achieved</th>${mode === 'target' ? '' : `<th class="num">vs ${esc(refLabel)}</th>`}
           <th class="num">Avg / Working Day</th><th class="num">Tailors / Day</th><th class="num">Present %</th><th class="num">Pcs / Tailor</th><th class="num">OT HC / Day</th><th class="num">Efficiency</th></tr></thead>
-        <tbody>${urows.map(x => line(x.u, x.c, x.l, f.unit === x.u)).join('') || '<tr><td colspan="12" class="empty">No data for this selection.</td></tr>'}</tbody>
-        ${urows.length ? `<tfoot>${line('Total', this.metrics(data, p, { category: f.category }), this.metrics(data, ctx.compare, { category: f.category }))}</tfoot>` : ''}
+        <tbody>${urows.map(x => line(x.u, x.c, x.l, f.unit === x.u)).join('') || `<tr><td colspan="${mode === 'target' ? 11 : 12}" class="empty">No data for this selection.</td></tr>`}</tbody>
+        ${urows.length ? `<tfoot>${line('Total', this.metrics(data, p, { category: f.category }), this.metrics(data, refR, { category: f.category }))}</tfoot>` : ''}
       </table></div>
       <div class="sec-title">${esc(fyl)} to date – ${esc(fmtMonth(fyR.from))} to ${esc(fmtMonth(p.to))}</div>
       <div class="tbl-wrap"><table>
