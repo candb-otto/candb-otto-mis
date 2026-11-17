@@ -9,7 +9,7 @@ const MODULE_REPORTS = {
     // On hold (Mari, 16-11-2026): Fusing & Embroidery report hidden; code kept below to switch it back on later.
     // { key: 'fusing', name: 'Fusing & Embroidery', def: () => FusingReport },
     { key: 'sewing', name: 'Sewing', def: () => SewingV2 },          // MIS System data, targets and metrics
-    { key: 'ironing', name: 'Ironing', def: () => IroningReport },
+    { key: 'ironing', name: 'Ironing', def: () => IroningV2 },          // MIS System data, targets and metrics
     { key: 'washing', name: 'Washing', def: () => WashingReport },
     { key: 'packing', name: 'Packing' },
   ],

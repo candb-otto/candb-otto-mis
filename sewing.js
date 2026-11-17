@@ -120,7 +120,7 @@ const SewingV2 = {
     const targets = tg.rows.filter(r => /^sewing/i.test(r[1] || '')).map(([m, proc, u, q, pres]) => ({ month: m, eqTarget: /equiv/i.test(proc), unit: um(u, '', m).unit, qty: q || 0, present: pres || 0 }));
     const wdays = Object.fromEntries(wd.rows.map(([m, n]) => [m, n]));
     const unitFloor = um.floorOf;
-    const machines = mach.map(r => ({ floor: String(r.Floor || '').replace(/^floor\s*/i, '').trim().toUpperCase(), n: Number(r.Machines) || 0, from: String(r['Active From'] || '1900-01-01'), cap: Number(r['Capacity per Year']) || 0 }));
+    const machines = mach.filter(r => !r.Process || /^sewing/i.test(r.Process)).map(r => ({ floor: String(r.Floor || '').replace(/^floor\s*/i, '').trim().toUpperCase(), n: Number(r.Machines) || 0, from: String(r['Active From'] || '1900-01-01'), cap: Number(r['Capacity per Year']) || 0 }));
     return { lots, lotDays, days, ots, targets, wdays, unitFloor, machines, base, hours, fy, from, sortUnits: um.sort };
   },
 
