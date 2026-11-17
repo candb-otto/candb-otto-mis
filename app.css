@@ -262,3 +262,31 @@ td.wrap { white-space: normal; min-width: 220px; }
   .filters.inline label, .filters.inline input { width: 100%; }
 }
 @media print { .appbar { display: none; } }
+
+/* ---------- Masters page ---------- */
+.ms-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.ms-tab { font: inherit; font-size: 13px; border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 18px; padding: 5px 12px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.ms-tab small { color: var(--muted); font-size: 11px; }
+.ms-tab.on { background: var(--brand); border-color: var(--brand); font-weight: 700; }
+.ms-tab.on small { color: var(--ink); }
+.ms-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: flex-start; margin-bottom: 10px; }
+.ms-head h2 { margin: 0 0 4px; font-size: 17px; }
+.ms-head p { margin: 0 0 2px; }
+.ms-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ms-dirty { color: var(--warn); font-weight: 600; font-size: 13px; }
+.ms-copy { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.ms-copy select, .ms-copy input { min-width: 0 !important; }
+.ms-grid td { padding: 3px 4px; vertical-align: middle; }
+.ms-grid input, .ms-grid select { font: inherit; font-size: 13px; width: 100%; min-width: 90px; padding: 4px 6px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--ink); }
+.ms-grid input:hover, .ms-grid select:hover { border-color: var(--line); }
+.ms-grid input:focus, .ms-grid select:focus { outline: 2px solid var(--brand); border-color: var(--brand); background: #fff; }
+.ms-grid input[inputmode=decimal] { text-align: right; min-width: 80px; }
+.ms-grid .bad { border-color: var(--bad) !important; background: var(--bad-soft); }
+.ms-grid tr.new td { background: var(--warn-soft); }
+.ms-grid .req { color: var(--bad); }
+.ms-row-act { white-space: nowrap; }
+.btn.danger { color: var(--bad); }
+.ms-errors { background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; }
+.ms-errors ul { margin: 4px 0 0 18px; padding: 0; }
+tr.sub-row td { color: var(--muted); font-size: 12.5px; background: #fafbfa; }
+tr.sub-row td:first-child { padding-left: 20px; }

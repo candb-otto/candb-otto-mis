@@ -27,16 +27,46 @@ function cmpTile(label, value, sub, lines) {
     ${lines.length ? `<dl class="cmp">${lines.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : ''}</div>`;
 }
 
+// Units master: data unit (+ sub unit) on a date → report unit, its roll-up group and floor.
+// A row applies from "Effective From" to "Effective To"; when several apply, the latest "Effective From" wins.
+// Units with "Roll-up To" are added into that unit for every figure (tailors and targets are not entered for them),
+// and shown under it with their own output only.
+const stripUnit = s => String(s || '').replace(/^(unit|floor)\s*/i, '').trim();
+function unitMapper(master, process) {
+  const norm = s => String(s || '').trim().toLowerCase();
+  const rows = master.filter(r => norm(r.Process) === norm(process) && r.Active !== 'No').map((r, i) => ({
+    du: norm(r['Data Unit']), su: norm(r['Sub Unit']), ru: String(r['Report Unit'] || '').trim(), roll: String(r['Roll-up To'] || '').trim(),
+    floor: String(r.Floor || '').replace(/^floor\s*/i, '').trim().toUpperCase(), from: r['Effective From'] || '', to: r['Effective To'] || '9999-12-31', i }));
+  const order = [];
+  rows.forEach(r => { for (const u of [r.roll || r.ru, r.ru]) if (u && !order.includes(u)) order.push(u); });
+  const floorOf = {};
+  rows.forEach(r => { if (r.floor) { floorOf[r.ru] = floorOf[r.ru] || r.floor; if (r.roll) floorOf[r.roll] = floorOf[r.roll] || r.floor; } });
+  const cache = {};
+  const pick = (du, su, d) => rows.filter(r => r.du === du && r.su === su && r.from <= d && d <= r.to).sort((a, b) => (a.from < b.from ? 1 : a.from > b.from ? -1 : a.i - b.i))[0];
+  const map = (unit, sub, date) => {
+    const d = String(date || '').length === 7 ? date + '-01' : String(date || '9999-12-31').slice(0, 10);
+    const key = `${unit}|${sub || ''}|${d}`;
+    if (key in cache) return cache[key];
+    const du = norm(unit), su = norm(sub);
+    const hit = (su && (pick(du, su, d) || pick(su, '', d))) || pick(du, '', d);
+    const ru = hit ? hit.ru : stripUnit(sub || unit) || '(none)';
+    return (cache[key] = { unit: hit && hit.roll ? hit.roll : ru, sub: ru });
+  };
+  map.order = order; map.floorOf = floorOf;
+  map.sort = list => [...list].sort((a, b) => { const x = order.indexOf(a), y = order.indexOf(b); return (x < 0) - (y < 0) || x - y || String(a).localeCompare(String(b)); });
+  return map;
+}
+
 const SewingV2 = {
   sources: ['ms_sewing_lot', 'ms_sewing_daily', 'ms_sewing_ot', 'ms_targets'],
   dims: { unit: 'Unit', category: 'Category' },
   filterKey: 'unit',
   compareModes: true,
   detailSources: [
-    { report: 'ms_sewing_lot', title: 'Sewing lots', map: { unit: 'Unit', category: 'Category' },
-      view: r => ({ ...r, Category: (SEW.items[String(r.Item || '').toUpperCase()] || {}).cat || '(none)' }) },
-    { report: 'ms_sewing_daily', title: 'Daily tailors', map: { unit: 'Unit' }, consts: {} },
-    { report: 'ms_sewing_ot', title: 'Overtime', map: { unit: 'Unit' }, consts: {} },
+    { report: 'ms_sewing_lot', title: 'Sewing lots', map: { unit: '_unit', category: 'Category' },
+      view: r => ({ ...r, _unit: SEW.unitOf(r), Category: (SEW.items[String(r.Item || '').toUpperCase()] || {}).cat || '(none)' }) },
+    { report: 'ms_sewing_daily', title: 'Daily tailors', map: { unit: '_unit' }, consts: {}, view: r => ({ ...r, _unit: SEW.unitOf(r) }) },
+    { report: 'ms_sewing_ot', title: 'Overtime', map: { unit: '_unit' }, consts: {}, view: r => ({ ...r, _unit: SEW.unitOf(r) }) },
   ],
 
   async load(p, c) {
@@ -44,9 +74,9 @@ const SewingV2 = {
     const from = [addMonths(p.from, -12), addMonths(p.to, -11), fy.start, c.from].sort()[0];
     const to = p.to;
     const [lotM, lotD, daily, ot, tg, wd, items, equ, mach, settings, units] = await Promise.all([
-      agg({ report: 'ms_sewing_lot', from, to, by: ['month', 'Unit', 'Item', 'Section'], sum: ['Qty'] }),
-      agg({ report: 'ms_sewing_lot', from: p.from, to: p.to, by: ['date', 'Unit', 'Item', 'Section'], sum: ['Qty'] }),
-      agg({ report: 'ms_sewing_daily', from, to, by: ['date', 'Unit'], sum: ['Tailor Strength', 'Tailor Present', 'Machines Used'] }),
+      agg({ report: 'ms_sewing_lot', from, to, by: ['month', 'Unit', 'Sub Unit', 'Item', 'Section'], sum: ['Qty'] }),
+      agg({ report: 'ms_sewing_lot', from: p.from, to: p.to, by: ['date', 'Unit', 'Sub Unit', 'Item', 'Section'], sum: ['Qty'] }),
+      agg({ report: 'ms_sewing_daily', from, to, by: ['date', 'Unit', 'Sub Unit'], sum: ['Tailor Strength', 'Tailor Present', 'Machines Used'] }),
       rowsOf('ms_sewing_ot', from, to),
       agg({ report: 'ms_targets', from, to, by: ['month', 'Process', 'Unit'], sum: ['Target Qty', 'Target Present / Day'] }),
       agg({ report: 'ms_working_days', from, to, by: ['month'], sum: ['Working Days'] }),
@@ -77,23 +107,24 @@ const SewingV2 = {
       return (factorCache[key] = f == null ? 1 : f);
     };
     const catOf = (item, section) => (section === 'Trouser' ? 'Trouser' : (SEW.items[String(item || '').toUpperCase()] || {}).cat || '(none)');
-    const lotRow = (period, unit, item, section, qty) => {
+    const um = unitMapper(units, 'Sewing');
+    SEW.unitOf = r => um(r.Unit, r['Sub Unit'], r.Date).unit;
+    const lotRow = (period, unit, sub, item, section, qty) => {
       const cat = catOf(item, section);
-      return { unit, cat, qty: qty || 0, eq: (qty || 0) * factor(period.slice(0, 7), cat.toLowerCase()) };
+      return { ...um(unit, sub, period), cat, qty: qty || 0, eq: (qty || 0) * factor(period.slice(0, 7), cat.toLowerCase()) };
     };
-    const lots = lotM.rows.map(([m, u, it, sec, q]) => ({ month: m, ...lotRow(m, u, it, sec, q) }));
-    const lotDays = lotD.rows.map(([d, u, it, sec, q]) => ({ date: d, month: d && d.slice(0, 7), ...lotRow(d || p.from, u, it, sec, q) }));
-    const days = daily.rows.map(([d, u, st, pr, used]) => ({ date: d, month: d && d.slice(0, 7), unit: u, strength: st || 0, present: pr || 0, used: used || 0 }));
-    const ots = ot.map(r => ({ date: r.Date, month: String(r.Date || '').slice(0, 7), unit: r.Unit, hc: (Number(r['OT Hours']) || 0) * (Number(r['Tailors on OT']) || 0) / hours }));
-    const targets = tg.rows.filter(r => /^sewing/i.test(r[1] || '')).map(([m, proc, u, q, pres]) => ({ month: m, eqTarget: /equiv/i.test(proc), unit: u, qty: q || 0, present: pres || 0 }));
+    const lots = lotM.rows.map(([m, u, su, it, sec, q]) => ({ month: m, ...lotRow(m, u, su, it, sec, q) }));
+    const lotDays = lotD.rows.map(([d, u, su, it, sec, q]) => ({ date: d, month: d && d.slice(0, 7), ...lotRow(d || p.from, u, su, it, sec, q) }));
+    const days = daily.rows.map(([d, u, su, st, pr, used]) => ({ date: d, month: d && d.slice(0, 7), unit: um(u, su, d).unit, strength: st || 0, present: pr || 0, used: used || 0 }));
+    const ots = ot.map(r => ({ date: r.Date, month: String(r.Date || '').slice(0, 7), unit: um(r.Unit, r['Sub Unit'], r.Date).unit, hc: (Number(r['OT Hours']) || 0) * (Number(r['Tailors on OT']) || 0) / hours }));
+    const targets = tg.rows.filter(r => /^sewing/i.test(r[1] || '')).map(([m, proc, u, q, pres]) => ({ month: m, eqTarget: /equiv/i.test(proc), unit: um(u, '', m).unit, qty: q || 0, present: pres || 0 }));
     const wdays = Object.fromEntries(wd.rows.map(([m, n]) => [m, n]));
-    const unitFloor = {};
-    units.filter(r => /sewing/i.test(r.Process || '')).forEach(r => { unitFloor[r.Unit] = String(r.Floor || '').trim().toUpperCase(); });
+    const unitFloor = um.floorOf;
     const machines = mach.map(r => ({ floor: String(r.Floor || '').replace(/^floor\s*/i, '').trim().toUpperCase(), n: Number(r.Machines) || 0, from: String(r['Active From'] || '1900-01-01'), cap: Number(r['Capacity per Year']) || 0 }));
-    return { lots, lotDays, days, ots, targets, wdays, unitFloor, machines, base, hours, fy, from };
+    return { lots, lotDays, days, ots, targets, wdays, unitFloor, machines, base, hours, fy, from, sortUnits: um.sort };
   },
 
-  units(data) { return [...new Set(data.lots.map(r => r.unit).concat(data.days.map(r => r.unit)).filter(Boolean))].sort(); },
+  units(data) { return data.sortUnits(new Set(data.lots.map(r => r.unit).concat(data.days.map(r => r.unit)).filter(Boolean))); },
 
   // All figures for one period and the current filters
   metrics(data, range, f) {
@@ -108,12 +139,13 @@ const SewingV2 = {
     const present = sum(D, r => r.present), strength = sum(D, r => r.strength), used = sum(D, r => r.used);
     const presDays = new Set(D.filter(r => r.present > 0).map(r => r.date)).size;
     const hc = sum(O, r => r.hc), otDays = new Set(O.map(r => r.date)).size;
-    const months = monthSeq(range.from, range.to);
+    // for one unit, only the months it has data (a unit can start or stop inside the period, e.g. C before / after the split)
+    const months = monthSeq(range.from, range.to).filter(m => f.unit == null || L.some(r => r.month === m) || D.some(r => r.month === m) || T.some(r => r.month === m));
     const wd = sum(months, m => data.wdays[m] || new Set(data.days.filter(r => r.month === m && r.present > 0).map(r => r.date)).size);
     const target = sum(T.filter(r => !r.eqTarget), r => r.qty), eqTarget = sum(T.filter(r => r.eqTarget), r => r.qty);
     // machines in place on the last day of the period (per floor, latest "Active From")
     const end = lastDay(range.to);
-    const floors = f.unit ? [data.unitFloor[f.unit] || unitKey(f.unit).replace(/^unit\s*/i, '').replace(/\d+$/, '')] : [...new Set(data.machines.map(m => m.floor))];
+    const floors = f.unit ? [data.unitFloor[f.unit] || stripUnit(f.unit).replace(/\d+$/, '').toUpperCase()] : [...new Set(data.machines.map(m => m.floor))];
     let mc = 0, cap = 0;
     for (const fl of floors) {
       const rows = data.machines.filter(m => m.floor === fl && m.from <= end).sort((a, b) => (a.from < b.from ? 1 : -1));
@@ -175,9 +207,9 @@ const SewingV2 = {
     Charts.gauge($('cGauge'), { actual: C.qty, target: C.target }, { id: 'sew2-gauge', title: 'Target vs Actual', sub: periodLabel(p), actualLabel: 'Actual', fmt: n0 });
 
     // 2. Efficiency by unit (target 100%)
-    const unitsAll = [...new Set(data.lots.map(r => r.unit).filter(Boolean))].sort();
+    const unitsAll = data.sortUnits(new Set(data.lots.map(r => r.unit).filter(Boolean)));
     const ucolors = Charts.colorMap(unitsAll);
-    const effItems = unitsAll.filter(u => this.metrics(data, p, { unit: u }).qty > 0).map(u => { const m = this.metrics(data, p, { ...f, unit: u }); return { key: u, label: u, short: u.replace(/^Unit /, ''), value: m.eff == null ? 0 : m.eff * 100, color: ucolors[u], hi: f.unit ? f.unit === u : false }; });
+    const effItems = unitsAll.filter(u => this.metrics(data, p, { unit: u }).qty > 0).map(u => { const m = this.metrics(data, p, { ...f, unit: u }); return { key: u, label: u, short: u, value: m.eff == null ? 0 : m.eff * 100, color: ucolors[u], hi: f.unit ? f.unit === u : false }; });
     Charts.barsV($('cEff'), effItems, { id: 'sew2-eff', title: 'Efficiency by Unit', sub: 'Equivalent qty per tailor-day (incl. OT) ÷ ' + data.base + ' · click a unit to filter',
       keyLabel: 'Unit', valueLabel: 'Efficiency %', fmt: v => (v == null ? '–' : v.toFixed(1) + '%'), avg: { value: 100, label: 'Target' },
       onClick: d => setFilter('unit', d.key) });
@@ -205,6 +237,13 @@ const SewingV2 = {
     const urows = unitsAll.map(u => ({ u, c: this.metrics(data, p, { ...f, unit: u }), l: this.metrics(data, refR, { ...f, unit: u }), y: this.metrics(data, fyR, { ...f, unit: u }) }))
       .filter(x => x.c.qty || x.c.present || x.c.target);
     const td = v => `<td class="num">${v}</td>`;
+    // sub units rolled into a unit: output only (tailors and targets are entered for the whole unit)
+    const subsOf = (u, R) => data.sortUnits(new Set(data.lots.filter(r => r.unit === u && r.sub !== u && r.month >= R.from && r.month <= R.to).map(r => r.sub)));
+    const subQty = (u, sb, R) => { const L = data.lots.filter(r => r.unit === u && r.sub === sb && r.month >= R.from && r.month <= R.to && (f.category == null || r.cat === f.category)); return { qty: sum(L, r => r.qty), eq: sum(L, r => r.eq) }; };
+    const dash = td('<span class="note">–</span>');
+    const subLine = (u, sb, wd) => { const c = subQty(u, sb, p), l = subQty(u, sb, refR);
+      return `<tr class="sub-row"><td>↳ ${esc(sb)}</td>${td(n0(c.qty))}${td(n0(c.eq))}${dash}${dash}${mode === 'target' ? '' : td(chgHtml(c.qty, l.qty))}${td(wd ? n0(c.qty / wd) : '–')}${dash}${dash}${dash}${dash}${dash}</tr>`; };
+    const subFy = (u, sb) => { const y = subQty(u, sb, fyR); return `<tr class="sub-row"><td>↳ ${esc(sb)}</td>${td(n0(y.qty))}${dash}${dash}${dash}${td(n0(y.eq))}${dash}</tr>`; };
     const line = (name, c, l, sel) => `<tr class="${name !== 'Total' ? 'click' : 'total'} ${sel ? 'sel' : ''}" ${name !== 'Total' ? `data-k="${esc(name)}"` : ''}><td>${esc(name)}</td>
       ${td(n0(c.qty))}${td(n0(c.eq))}${td(c.target ? n0(c.target) : '–')}${td(achHtml(c.ach))}${mode === 'target' ? '' : td(chgHtml(c.qty, l.qty))}${td(n0(c.avgWD))}
       ${td(n0(c.presentDay))}${td(pctTxt(c.presentPct))}${td(n1(c.ppt))}${td(n1(c.otDay))}${td(c.eff == null ? '–' : achHtml(c.eff))}</tr>`;
@@ -213,16 +252,16 @@ const SewingV2 = {
       <div class="tbl-wrap"><table>
         <thead><tr><th>Unit</th><th class="num">Sewing Qty</th><th class="num">Equ. Qty</th><th class="num">Target</th><th class="num">Achieved</th>${mode === 'target' ? '' : `<th class="num">vs ${esc(refLabel)}</th>`}
           <th class="num">Avg / Working Day</th><th class="num">Tailors / Day</th><th class="num">Present %</th><th class="num">Pcs / Tailor</th><th class="num">OT HC / Day</th><th class="num">Efficiency</th></tr></thead>
-        <tbody>${urows.map(x => line(x.u, x.c, x.l, f.unit === x.u)).join('') || `<tr><td colspan="${mode === 'target' ? 11 : 12}" class="empty">No data for this selection.</td></tr>`}</tbody>
+        <tbody>${urows.map(x => line(x.u, x.c, x.l, f.unit === x.u) + subsOf(x.u, p).map(sb => subLine(x.u, sb, x.c.wd)).join('')).join('') || `<tr><td colspan="${mode === 'target' ? 11 : 12}" class="empty">No data for this selection.</td></tr>`}</tbody>
         ${urows.length ? `<tfoot>${line('Total', this.metrics(data, p, { category: f.category }), this.metrics(data, refR, { category: f.category }))}</tfoot>` : ''}
       </table></div>
       <div class="sec-title">${esc(fyl)} to date – ${esc(fmtMonth(fyR.from))} to ${esc(fmtMonth(p.to))}</div>
       <div class="tbl-wrap"><table>
         <thead><tr><th>Unit</th><th class="num">Sewing Qty</th><th class="num">Target to date</th><th class="num">Achieved</th><th class="num">Difference</th><th class="num">Equ. Qty</th><th class="num">Efficiency</th></tr></thead>
-        <tbody>${urows.map(x => fyLine(x.u, x.y)).join('')}</tbody>
+        <tbody>${urows.map(x => fyLine(x.u, x.y) + subsOf(x.u, fyR).map(sb => subFy(x.u, sb)).join('')).join('')}</tbody>
         <tfoot>${fyLine('Total', FY)}</tfoot>
       </table></div>
-      <p class="note small foot-note">Efficiency = equivalent qty ÷ (tailors present + OT head count) ÷ ${data.base}. OT head count = tailors × OT hours ÷ ${data.hours}. Average per working day uses the working days of each month. Machines in place on the last day of the period; capacity from the machines list.</p>`;
+      <p class="note small foot-note">Efficiency = equivalent qty ÷ (tailors present + OT head count) ÷ ${data.base}. OT head count = tailors × OT hours ÷ ${data.hours}. Average per working day uses the working days of each month. Machines in place on the last day of the period; capacity from the machines list. Unit names come from the Units master; ↳ rows are sub units added into the unit above (their tailors and targets are entered for the whole unit).</p>`;
     $('repSummary').querySelectorAll('tr[data-k]').forEach(tr => tr.onclick = () => setFilter('unit', tr.dataset.k));
     $('btnDetails').onclick = () => openDetails(0);
   },

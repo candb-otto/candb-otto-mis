@@ -48,8 +48,8 @@ function say(msg, kind) {
 }
 
 // ---------- routing ----------
-const TITLES = { password: 'Change Password', home: 'Home', module: 'Module', upload: 'Upload Data', users: 'Users' };
-const ADMIN_ROUTES = ['users', 'upload'];
+const TITLES = { password: 'Change Password', home: 'Home', module: 'Module', upload: 'Upload Data', users: 'Users', masters: 'Masters' };
+const ADMIN_ROUTES = ['users', 'upload', 'masters'];
 
 function go(route) { if (location.hash !== '#/' + route) location.hash = '#/' + route; else render(); }
 
@@ -68,6 +68,11 @@ function render() {
   let [route, param, sub] = currentRoute().split('/');
   if (!TITLES[route] || (route === 'module' && !param)) route = 'home';
   if (ADMIN_ROUTES.includes(route) && u.role !== 'admin') route = 'home';
+  // Unsaved master list: ask before leaving the Masters page
+  if (route !== 'masters' && typeof Masters !== 'undefined' && Masters.dirty()) {
+    if (!confirm('You have changes to a master list that are not saved. Leave them?')) { history.replaceState(null, '', '#/masters'); route = 'masters'; param = undefined; }
+    else { Masters.discard(); window.removeEventListener('beforeunload', stopLeave); }
+  }
 
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + route));
   document.querySelectorAll('#sidebar [data-route]').forEach(b => {
@@ -84,6 +89,7 @@ function render() {
   if (route === 'module') loadModule(param, sub);
   if (route === 'users') loadUsers();
   if (route === 'upload') loadUploadPage();
+  if (route === 'masters') loadMasters(param);
 }
 
 function initials(name) {
