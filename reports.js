@@ -10,7 +10,7 @@ const MODULE_REPORTS = {
     // { key: 'fusing', name: 'Fusing & Embroidery', def: () => FusingReport },
     { key: 'sewing', name: 'Sewing', def: () => SewingV2 },          // MIS System data, targets and metrics
     { key: 'ironing', name: 'Ironing', def: () => IroningV2 },          // MIS System data, targets and metrics
-    { key: 'washing', name: 'Washing', def: () => WashingReport },
+    { key: 'washing', name: 'Washing', def: () => WashingV2 },          // MIS System data and metrics
     { key: 'packing', name: 'Packing', def: () => PackingV2 },          // MIS System data, targets and metrics
   ],
 };
@@ -129,9 +129,9 @@ function drawReport(data) {
   const fk = def.filterKey || 'unit', fl = def.dims[fk] || 'Unit';
   const cmp = compareOf(rp.period);
   // "Compare with" (reports that support it): previous period, same period last year, or target
-  const CMP_MODES = { prev: 'Previous period', ly: 'Same period last year', target: 'Target' };
+  const CMP_MODES = def.noTarget ? { prev: 'Previous period', ly: 'Same period last year' } : { prev: 'Previous period', ly: 'Same period last year', target: 'Target' };
   if (!rp.compareMode) rp.compareMode = store(CMP_KEY) || 'prev';
-  const mode = def.compareModes ? rp.compareMode : 'prev';
+  const mode = def.compareModes ? (def.noTarget && rp.compareMode === 'target' ? 'prev' : rp.compareMode) : 'prev';
   const cmpText = mode === 'target' ? 'compared with target' : `compared with ${periodLabel(mode === 'ly' ? { from: addMonths(rp.period.from, -12), to: addMonths(rp.period.to, -12) } : cmp)}`;
 
   $('repBody').innerHTML = `
