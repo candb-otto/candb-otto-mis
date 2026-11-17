@@ -11,7 +11,7 @@ const MODULE_REPORTS = {
     { key: 'sewing', name: 'Sewing', def: () => SewingV2 },          // MIS System data, targets and metrics
     { key: 'ironing', name: 'Ironing', def: () => IroningV2 },          // MIS System data, targets and metrics
     { key: 'washing', name: 'Washing', def: () => WashingReport },
-    { key: 'packing', name: 'Packing' },
+    { key: 'packing', name: 'Packing', def: () => PackingV2 },          // MIS System data, targets and metrics
   ],
 };
 const MODULE_NAMES = { production: 'Production' };
