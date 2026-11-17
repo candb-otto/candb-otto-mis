@@ -4,7 +4,7 @@
 
 const MODULE_REPORTS = {
   production: [
-    { key: 'fabric', name: 'Fabric Issue', def: () => FabricReport },
+    { key: 'fabric', name: 'Fabric Issue', def: () => FabricV2 },          // MIS System data, targets and metrics
     { key: 'cutting', name: 'Cutting', def: () => CuttingV2 },          // MIS System data, targets and metrics
     // On hold (Mari, 16-11-2026): Fusing & Embroidery report hidden; code kept below to switch it back on later.
     // { key: 'fusing', name: 'Fusing & Embroidery', def: () => FusingReport },
