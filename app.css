@@ -300,12 +300,14 @@ tr.sub-row td:first-child { padding-left: 20px; }
 /* Undefined masters */
 .um-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .um-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-.um-chip { font-size: 13px; border: 1px solid var(--line); border-radius: 18px; padding: 4px 12px; text-decoration: none; color: var(--ink); background: #fff; }
+.um-chip { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid var(--line); border-radius: 18px; padding: 4px 12px; text-decoration: none; color: var(--ink); background: #fff; }
 .um-chip.bad b { color: var(--bad); }
 .um-chip.ok b { color: var(--good); }
-.um-card { margin-bottom: 14px; }
+.um-card { margin-bottom: 14px; scroll-margin-top: 12px; }
+.um-chip:hover { border-color: var(--brand); }
 .um-card.ok { padding-top: 10px; padding-bottom: 10px; }
 .um-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .um-title h2 { font-size: 16px; margin: 0; }
 .um-title .btn { margin-left: auto; }
 .home-alert { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 8px 12px; margin-bottom: 14px; font-size: 13px; }
+.um-title { scroll-margin-top: 16px; }

@@ -20,7 +20,7 @@ function umDate(d) { return d ? fmtDate(d).replace(/,.*$/, '') : ''; }
 
 function drawMissing() {
   const d = UM.data;
-  const chips = d.groups.map(g => `<a class="um-chip ${g.items.length ? 'bad' : 'ok'}" href="#um-${g.key}">${esc(g.label)} <b>${g.items.length ? fmtNum(g.items.length) : '✓'}</b></a>`).join('');
+  const chips = d.groups.map(g => `<button type="button" class="um-chip ${g.items.length ? 'bad' : 'ok'}" data-jump="um-${g.key}">${esc(g.label)} <b>${g.items.length ? fmtNum(g.items.length) : '✓'}</b></button>`).join('');
   $('umBody').innerHTML = `
     <div class="um-head">
       <p class="note">${d.total ? `<b>${fmtNum(d.total)}</b> values in the data have no matching row in a master list. Reports still show them, but with a guessed name, no target or no factor.` : 'Every value in the data has a matching master row.'}
@@ -36,6 +36,7 @@ function drawMissing() {
     const rows = b.dataset.add === 'all' ? g.items.map(i => i.prefill) : [g.items[Number(b.dataset.add)].prefill];
     sendToMaster(g.key, rows);
   });
+  $('umBody').querySelectorAll('[data-jump]').forEach(b => b.onclick = () => { const t = document.getElementById(b.dataset.jump); if (t) t.scrollIntoView({ block: 'start' }); });
   $('umBody').querySelectorAll('[data-more]').forEach(b => b.onclick = () => { UM.open[b.dataset.more] = true; drawMissing(); });
 }
 
