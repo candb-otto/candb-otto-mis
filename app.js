@@ -789,9 +789,10 @@ async function syncOrders() {
     const wanted = up.config ? up.config.reports.filter(r => r.erp).map(r => r.sheet) : ['SO', 'Cancel', 'DC'];
     for (const tab of info.tabs.filter(t => wanted.some(w => w.toLowerCase() === t.toLowerCase()))) {
       const d = await api(`/api/orders/sheet?tab=${encodeURIComponent(tab)}`).catch(err => { throw new Error(`Tab ${tab}: ${err.message}`); });
-      if (!d.values || d.values.length < 2) continue;   // empty tab
+      const values = d.sheet && d.sheet.values;
+      if (!values || values.length < 2) continue;   // empty tab
       wb.SheetNames.push(tab);
-      wb.Sheets[tab] = X.utils.aoa_to_sheet(d.values);
+      wb.Sheets[tab] = X.utils.aoa_to_sheet(values);
     }
     if (!wb.SheetNames.length) throw new Error('The tabs SO, Cancel and DC of the MIS Orders sheet are empty.');
     up.file = { name: `Google Sheet: ${info.title}` };
