@@ -17,7 +17,7 @@ async function loadMasters(key) {
       MS.defs = d.masters;
     }
     const want = MS.defs.find(x => x.key === key) ? key : (MS.key || MS.defs[0].key);
-    if (want === MS.key && MS.dirty) { drawMasters(); return; }   // keep unsaved edits
+    if (want === MS.key && MS.dirty) { applyPrefill(want); drawMasters(); return; }   // keep unsaved edits
     await openMaster(want);
   } catch (err) { say(err.message, 'error'); }
 }
@@ -34,6 +34,7 @@ async function openMaster(key) {
       if (b && Number(b.Value) > 0) MS.base = Number(b.Value);
     } catch { /* keep 20 */ }
   }
+  applyPrefill(key);
   const want = `masters/${key}`;
   if (currentRoute() !== want) history.replaceState(null, '', '#/' + want);
   drawMasters();
@@ -60,8 +61,8 @@ function drawMasters() {
       <div><h2>${esc(def.label)}</h2><p class="note small">${esc(def.desc)}</p><p class="note small">${saved}</p></div>
       <div class="ms-actions">
         <span class="ms-dirty ${MS.dirty ? '' : 'hidden'}" id="msDirty">Changes not saved</span>
-        <button class="btn" type="button" id="msFromSheet" title="Read the tab ${esc(def.tab || '')} of the MIS System Google Sheet into this list. Nothing is saved until you press Save.">Load from Sheet</button>
-        <button class="btn" type="button" id="msToSheet" title="Write the saved list to the tab ${esc(def.tab || '')} of the MIS System Google Sheet" ${MS.dirty ? 'disabled' : ''}>Copy to Sheet</button>
+        <button class="btn" type="button" id="msBulk" title="Add or replace many rows from an Excel file (same columns as Download Excel). Nothing is saved until you press Save.">Bulk upload (Excel)</button>
+        <input type="file" id="msBulkFile" accept=".xlsx,.xls,.csv" hidden>
         <button class="btn" type="button" id="msExcel">Download Excel</button>
         <button class="btn" type="button" id="msCancel" ${MS.dirty ? '' : 'disabled'}>Cancel changes</button>
         <button class="btn primary" type="button" id="msSave" ${MS.dirty ? '' : 'disabled'}>Save</button>
@@ -85,8 +86,8 @@ function drawMasters() {
   $('msSave').onclick = saveMaster;
   $('msCancel').onclick = () => { if (confirm('Undo all changes since the last save?')) { MS.dirty = false; openMaster(MS.key).catch(err => say(err.message, 'error')); } };
   $('msExcel').onclick = () => downloadMaster().catch(err => say(err.message, 'error'));
-  $('msFromSheet').onclick = () => loadFromSheet().catch(err => say(err.message, 'error'));
-  $('msToSheet').onclick = () => copyToSheet().catch(err => say(err.message, 'error'));
+  $('msBulk').onclick = () => { $('msBulkFile').value = ''; $('msBulkFile').click(); };
+  $('msBulkFile').onchange = e => { const f = e.target.files[0]; if (f) bulkRead(f).catch(err => say(err.message, 'error')); };
   $('msSearch').oninput = e => { MS.search = e.target.value; MS.page = 1; drawRows(); };
   if (hasProc) $('msProc').onchange = e => { MS.proc = e.target.value; MS.page = 1; drawRows(); };
   if (def.dated) $('msCopy').onclick = copyMonth;
@@ -179,7 +180,7 @@ function msPager(total) {
 function markDirty() {
   if (!MS.dirty) { MS.dirty = true; window.addEventListener('beforeunload', stopLeave); }
   $('msDirty').classList.remove('hidden');
-  $('msSave').disabled = false; $('msCancel').disabled = false; $('msToSheet').disabled = true;
+  $('msSave').disabled = false; $('msCancel').disabled = false;
   const tab = $('msTabs').querySelector('.on small'); if (tab) tab.textContent = fmtNum(MS.rows.length);
 }
 
@@ -226,6 +227,12 @@ function checkRows() {
         else if (c.max != null && x > c.max) put(r, n, c.name, `"${c.name}" must be at most ${c.max}.`);
       }
       if (c.pattern && !new RegExp(c.pattern).test(String(v))) put(r, n, c.name, `"${c.name}" should look like ${c.help || c.pattern}.`);
+      if (c.type === 'choice' && !c.options.some(o => o.toLowerCase() === String(v).trim().toLowerCase())) put(r, n, c.name, `"${c.name}" must be one of ${c.options.join(', ')}.`);
+      if (c.type === 'yesno' && !['yes', 'no', 'y', 'n'].includes(String(v).trim().toLowerCase())) put(r, n, c.name, `"${c.name}" must be Yes or No.`);
+      if (c.type === 'date' || c.type === 'month') {
+        const d = String(v).trim(), t = Date.parse(d.slice(0, 10) + 'T00:00:00Z');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d.slice(0, 10)) || isNaN(t) || new Date(t).toISOString().slice(0, 10) !== d.slice(0, 10)) put(r, n, c.name, `"${c.name}" is not a valid date.`);
+      }
     }
     if (r['From Day'] != null && r['To Day'] != null && r['To Day'] !== '' && Number(r['To Day']) < Number(r['From Day'])) put(r, n, 'To Day', '"To Day" is less than "From Day".');
     if (r['Effective From'] && r['Effective To'] && r['Effective To'] < r['Effective From']) put(r, n, 'Effective To', '"Effective To" is before "Effective From".');
@@ -274,33 +281,101 @@ async function downloadMaster() {
   X.writeFile(wb, `${def.label} - ${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
-// Reads the list's tab from the MIS System Google Sheet into the screen as unsaved changes
-async function loadFromSheet() {
-  const def = msDef();
-  if (MS.dirty && !confirm('You have changes that are not saved. Replace them with the rows from the Google Sheet?')) return;
-  if (!MS.dirty && !confirm(`Load the rows from the Google Sheet tab "${def.tab}"? They replace the list on screen. Nothing is saved until you press Save.`)) return;
-  const btn = $('msFromSheet'); btn.disabled = true; btn.textContent = 'Loading…';
-  try {
-    const d = await api('/api/masters/fromsheet', { key: MS.key });
-    MS.rows = d.rows.map(r => ({ ...r, _id: ++msSeq }));
-    MS.search = ''; MS.proc = ''; MS.page = 1; MS.errors = {};
-    markDirty(); drawMasters();
-    const { errs, list } = checkRows();
-    MS.errors = errs; drawRows();
-    const all = [...new Set([...(d.errors || []), ...list])];
-    drawErrors(all);
-    const extra = d.unknownColumns && d.unknownColumns.length ? ` Columns not used: ${d.unknownColumns.join(', ')}.` : '';
-    say(all.length ? `${fmtNum(d.rows.length)} rows read from "${d.tab}". Some rows need correcting before you can save.${extra}`
-      : `${fmtNum(d.rows.length)} rows read from "${d.tab}". Check them, then press Save.${extra}`, all.length ? 'error' : 'ok');
-  } finally { const b = $('msFromSheet'); if (b) { b.disabled = false; b.textContent = 'Load from Sheet'; } }
+
+// ---------- rows sent from the Undefined Masters page ----------
+function applyPrefill(key) {
+  let p = null;
+  try { p = JSON.parse(sessionStorage.getItem('mis.prefill') || 'null'); sessionStorage.removeItem('mis.prefill'); } catch { p = null; }
+  if (!p || p.key !== key || !Array.isArray(p.rows) || !p.rows.length) return;
+  const def = MS.defs.find(x => x.key === key);
+  const k = r => def.unique.map(u => String(r[u] ?? '').trim().toLowerCase()).join('|');
+  const have = new Set(MS.rows.map(k));
+  const add = p.rows.filter(r => !have.has(k(r))).map(r => ({ ...Object.fromEntries(Object.entries(r).filter(([, v]) => v !== '' && v != null)), _id: ++msSeq, _new: true }));
+  if (!add.length) return;
+  MS.rows.unshift(...add);
+  MS.dirty = true; window.addEventListener('beforeunload', stopLeave);
+  setTimeout(() => say(`${add.length} new row${add.length > 1 ? 's' : ''} added at the top (highlighted). Fill in the empty columns, then press Save.`, 'ok'), 50);
 }
 
-// Writes the saved list to its tab in the MIS System Google Sheet
-async function copyToSheet() {
-  const btn = $('msToSheet'); btn.disabled = true; btn.textContent = 'Copying…';
-  try {
-    const d = await api('/api/masters/tosheet', { key: MS.key }).catch(err => ({ ok: false, results: [{ ok: false, message: err.message }] }));
-    const r = d.results && d.results[0];
-    say(r ? r.message : 'Could not copy.', r && r.ok ? 'ok' : 'error');
-  } finally { btn.disabled = false; btn.textContent = 'Copy to Sheet'; }
+// ---------- bulk upload from Excel ----------
+const MS_MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+function bulkDate(v) {
+  if (v == null || v === '') return '';
+  if (typeof v === 'number') return new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 86400000).toISOString().slice(0, 10);
+  const s = String(v).trim();
+  let m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?$/))) return `${m[1]}-${m[2].padStart(2, '0')}-${(m[3] || '1').padStart(2, '0')}`;
+  if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/))) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  if ((m = s.match(/^(\d{1,2})[- ]([A-Za-z]{3})[A-Za-z]*[- ](\d{2,4})$/)) && MS_MON[m[2].toLowerCase()]) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${String(MS_MON[m[2].toLowerCase()]).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  if ((m = s.match(/^([A-Za-z]{3})[A-Za-z]*[- ](\d{2,4})$/)) && MS_MON[m[1].toLowerCase()]) return `${m[2].length === 2 ? '20' + m[2] : m[2]}-${String(MS_MON[m[1].toLowerCase()]).padStart(2, '0')}-01`;
+  return s;   // left as typed; the check marks it
+}
+
+async function bulkRead(file) {
+  const def = msDef();
+  const X = await ensureXLSX();
+  const wb = X.read(await file.arrayBuffer(), { type: 'array', cellDates: false });
+  const name = wb.SheetNames.find(n => n.toLowerCase() === def.label.slice(0, 31).toLowerCase()) || wb.SheetNames[0];
+  const grid = X.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: null, raw: true, blankrows: false });
+  if (!grid.length) throw new Error('The file is empty.');
+  const head = grid[0].map(h => String(h ?? '').trim().toLowerCase());
+  const idx = Object.fromEntries(def.cols.map(c => [c.name, head.indexOf(c.name.toLowerCase())]));
+  const missing = def.cols.filter(c => c.req && idx[c.name] < 0).map(c => c.name);
+  if (missing.length) throw new Error(`The file has no column ${missing.map(m => '"' + m + '"').join(', ')}. Row 1 must have the column names, as in Download Excel.`);
+  const used = def.cols.filter(c => idx[c.name] >= 0);
+  const unknown = grid[0].map(h => String(h ?? '').trim()).filter(h => h && !def.cols.some(c => c.name.toLowerCase() === h.toLowerCase()));
+  const rows = [];
+  for (const line of grid.slice(1)) {
+    if (!line || line.every(v => v == null || String(v).trim() === '')) continue;
+    const r = {};
+    for (const c of used) {
+      let v = line[idx[c.name]];
+      if (v == null || String(v).trim() === '') continue;
+      if (c.type === 'date' || c.type === 'month') v = bulkDate(v);
+      else if (c.type === 'number') { const x = Number(String(v).replace(/,/g, '')); v = isFinite(x) ? x : String(v).trim(); }
+      else if (c.type === 'yesno') v = v === true ? 'Yes' : v === false ? 'No' : String(v).trim();
+      else v = String(v).trim();
+      if (c.type === 'month' && /^\d{4}-\d{2}-\d{2}$/.test(v)) v = v.slice(0, 7) + '-01';
+      r[c.name] = v;
+    }
+    rows.push(r);
+  }
+  if (!rows.length) throw new Error('No rows found under the column names.');
+  const key = r => def.unique.map(u => String(r[u] ?? '').trim().toLowerCase()).join('|');
+  const have = new Map(MS.rows.map(r => [key(r), r]));
+  const upd = rows.filter(r => have.has(key(r))).length;
+  $('msErrors').innerHTML = `<div class="ms-bulk">
+    <b>${esc(file.name)}</b>: ${fmtNum(rows.length)} rows read${name !== wb.SheetNames[0] || wb.SheetNames.length > 1 ? ` from sheet "${esc(name)}"` : ''}.
+    ${fmtNum(rows.length - upd)} new, ${fmtNum(upd)} already in the list (same ${esc(def.unique.join(' + '))}).
+    ${unknown.length ? `<br><span class="note small">Columns not used: ${esc(unknown.join(', '))}</span>` : ''}
+    ${used.length < def.cols.length ? `<br><span class="note small">Columns not in the file (kept as they are): ${esc(def.cols.filter(c => idx[c.name] < 0).map(c => c.name).join(', '))}</span>` : ''}
+    <div class="ms-bulk-act">
+      <button class="btn primary" type="button" id="msBulkAdd">Add new + update matching rows</button>
+      <button class="btn" type="button" id="msBulkReplace">Replace the whole list</button>
+      <button class="btn" type="button" id="msBulkCancel">Cancel</button>
+    </div>
+    <p class="note small">Nothing is saved until you press Save. When updating, empty cells in the file keep the value already in the list.</p></div>`;
+  $('msBulkCancel').onclick = () => drawErrors();
+  $('msBulkAdd').onclick = () => {
+    let added = 0, changed = 0;
+    for (const r of rows) {
+      const old = have.get(key(r));
+      if (old) { let ch = false; for (const [k, v] of Object.entries(r)) if (old[k] !== v) { old[k] = v; ch = true; } if (ch) { old._new = true; changed++; } }
+      else { MS.rows.unshift({ ...r, _id: ++msSeq, _new: true }); have.set(key(r), r); added++; }
+    }
+    bulkDone(`${fmtNum(added)} rows added, ${fmtNum(changed)} rows updated (highlighted).`);
+  };
+  $('msBulkReplace').onclick = () => {
+    if (!confirm(`Replace all ${fmtNum(MS.rows.length)} rows of ${def.label} with the ${fmtNum(rows.length)} rows of the file?`)) return;
+    MS.rows = rows.map(r => ({ ...r, _id: ++msSeq, _new: true }));
+    bulkDone(`The list now has the ${fmtNum(rows.length)} rows of the file.`);
+  };
+}
+
+function bulkDone(msg) {
+  MS.search = ''; MS.proc = ''; MS.page = 1;
+  markDirty(); drawMasters();
+  const { errs, list } = checkRows();
+  MS.errors = errs; drawRows(); drawErrors(list);
+  say(`${msg} ${list.length ? 'Some rows need correcting before you can save.' : 'Check them, then press Save.'}`, list.length ? 'error' : 'ok');
 }

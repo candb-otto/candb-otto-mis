@@ -48,8 +48,8 @@ function say(msg, kind) {
 }
 
 // ---------- routing ----------
-const TITLES = { password: 'Change Password', home: 'Home', module: 'Module', upload: 'Upload Data', users: 'Users', masters: 'Masters' };
-const ADMIN_ROUTES = ['users', 'upload', 'masters'];
+const TITLES = { password: 'Change Password', home: 'Home', module: 'Module', upload: 'Upload Data', users: 'Users', masters: 'Masters', missing: 'Undefined Masters' };
+const ADMIN_ROUTES = ['users', 'upload', 'masters', 'missing'];
 
 function go(route) { if (location.hash !== '#/' + route) location.hash = '#/' + route; else render(); }
 
@@ -90,6 +90,7 @@ function render() {
   if (route === 'users') loadUsers();
   if (route === 'upload') loadUploadPage();
   if (route === 'masters') loadMasters(param);
+  if (route === 'missing') loadMissing(param === 'refresh');
 }
 
 function initials(name) {
@@ -308,6 +309,7 @@ async function loadHome() {
     const { modules } = await api('/api/home');
     state.modules = modules;
     drawHome(modules);
+    homeMissingAlert();
   } catch (err) { say(err.message, 'error'); }
 }
 
