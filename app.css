@@ -311,3 +311,10 @@ tr.sub-row td:first-child { padding-left: 20px; }
 .um-title .btn { margin-left: auto; }
 .home-alert { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 8px 12px; margin-bottom: 14px; font-size: 13px; }
 .um-title { scroll-margin-top: 16px; }
+
+.um-act { white-space: nowrap; }
+tr.um-rows > td { background: var(--panel, #fafaf7); padding: 8px 10px; }
+.um-rowbox { margin-bottom: 10px; }
+.um-rowbox p { margin: 4px 0; }
+.del-month { margin: 10px 0 16px; }
+.del-month-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }

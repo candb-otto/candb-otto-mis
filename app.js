@@ -361,6 +361,9 @@ async function loadUploadPage() {
     drawDataStatus(s.reports);
     up.history = h.uploads;
     drawHistory();
+    let pre = null;
+    try { pre = sessionStorage.getItem('mis.delmonth'); sessionStorage.removeItem('mis.delmonth'); } catch { pre = null; }
+    if (pre) { const [rk, mo] = pre.split('|'); openDeleteMonth(rk, mo); }
   } catch (err) { say(err.message, 'error'); }
 }
 
@@ -371,7 +374,50 @@ function drawDataStatus(reports) {
     <td>${esc(r.label)}</td><td>${esc(r.sheet)}</td>
     <td class="num">${r.rows ? fmtNum(r.rows) : '–'}</td>
     <td>${r.firstMonth === '1900-01' ? 'Master list' : r.firstMonth ? `${fmtMonth(r.firstMonth)} – ${fmtMonth(r.lastMonth)}` : (r.enabled ? '<span class="note">No data yet</span>' : `<span class="note">${esc(r.note || 'Not loaded')}</span>`)}</td>
-    <td>${r.lastUpdated ? fmtDate(r.lastUpdated) : '–'}</td><td>${esc(r.updatedBy || '')}</td></tr>`).join('');
+    <td>${r.lastUpdated ? fmtDate(r.lastUpdated) : '–'}</td><td>${esc(r.updatedBy || '')}</td>
+    <td>${r.deletable && r.rows ? `<button class="btn small" type="button" data-delrep="${esc(r.key)}">Delete a month</button>` : ''}</td></tr>`).join('');
+  up.reports = reports;
+  $('statusRows').querySelectorAll('[data-delrep]').forEach(b => b.onclick = () => openDeleteMonth(b.dataset.delrep));
+}
+
+// Delete one month of one report (to remove wrong rows, e.g. a mistyped year). Asks twice before deleting.
+async function openDeleteMonth(report, month) {
+  const box = $('delMonthBox'), r = (up.reports || []).find(x => x.key === report);
+  if (!r) return;
+  box.innerHTML = '<p class="note">Loading months…</p>';
+  try {
+    const d = await api(`/api/months?report=${encodeURIComponent(report)}`);
+    box.innerHTML = `<div class="card del-month">
+      <b>Delete a month of ${esc(r.label)}</b>
+      <p class="note small">Use this to remove wrong rows (for example a year typed wrongly). Fix the MIS System sheet first. To get a month back, upload the file again.</p>
+      <div class="del-month-row"><select id="dmMonth">${d.months.map(m => `<option value="${m}" ${m === month ? 'selected' : ''}>${esc(fmtMonth(m))}</option>`).join('')}</select>
+        <button class="btn" type="button" id="dmCheck">Check rows</button>
+        <button class="btn" type="button" id="dmClose">Close</button></div>
+      <div id="dmResult"></div></div>`;
+    box.scrollIntoView({ block: 'nearest' });
+    $('dmClose').onclick = () => { box.innerHTML = ''; };
+    $('dmMonth').onchange = () => { $('dmResult').innerHTML = ''; };
+    $('dmCheck').onclick = async () => {
+      const mo = $('dmMonth').value;
+      try {
+        const c = await api('/api/data/delete-month', { report, month: mo });
+        $('dmResult').innerHTML = `<p><b>${fmtNum(c.rows)}</b> rows of ${esc(r.label)} in <b>${esc(fmtMonth(mo))}</b> will be deleted. This cannot be undone here.</p>
+          <button class="btn danger" type="button" id="dmDelete" ${c.rows ? '' : 'disabled'}>Delete ${fmtNum(c.rows)} rows</button>`;
+        $('dmDelete').onclick = async () => {
+          if (!confirm(`Delete all ${fmtNum(c.rows)} rows of ${r.label} in ${fmtMonth(mo)}?`)) return;
+          $('dmDelete').disabled = true;
+          try {
+            const x = await api('/api/data/delete-month', { report, month: mo, confirm: true });
+            box.innerHTML = '';
+            if (typeof UM !== 'undefined') UM.data = null;
+            say(`${fmtNum(x.deleted)} rows of ${r.label} in ${fmtMonth(mo)} deleted.`, 'ok');
+            loadUploadPage();
+          } catch (err) { say(err.message, 'error'); $('dmDelete').disabled = false; }
+        };
+      } catch (err) { say(err.message, 'error'); }
+    };
+    if (month) $('dmCheck').click();
+  } catch (err) { box.innerHTML = ''; say(err.message, 'error'); }
 }
 
 function drawHistory() {

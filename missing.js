@@ -37,6 +37,7 @@ function drawMissing() {
     sendToMaster(g.key, rows);
   });
   $('umBody').querySelectorAll('[data-jump]').forEach(b => b.onclick = () => { const t = document.getElementById(b.dataset.jump); if (t) t.scrollIntoView({ block: 'start' }); });
+  $('umBody').querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewRows(b).catch(err => say(err.message, 'error')));
   $('umBody').querySelectorAll('[data-more]').forEach(b => b.onclick = () => { UM.open[b.dataset.more] = true; drawMissing(); });
 }
 
@@ -53,7 +54,9 @@ function groupHtml(g) {
         <td><b>${esc(it.text)}</b></td><td>${esc(it.note)}</td><td>${esc(it.where)}</td>
         <td class="num">${fmtNum(it.rows)}</td><td class="num">${it.qty == null ? '' : fmtNum(it.qty)}</td>
         <td>${esc(umDate(it.first))}</td><td>${esc(umDate(it.last))}</td>
-        <td><button class="btn small" type="button" data-g="${g.key}" data-add="${g.items.indexOf(it)}">Add to master</button></td></tr>`).join('')}</tbody>
+        <td class="um-act"><button class="btn small" type="button" data-g="${g.key}" data-view="${g.items.indexOf(it)}">View rows</button>
+          <button class="btn small" type="button" data-g="${g.key}" data-add="${g.items.indexOf(it)}">Add to master</button></td></tr>
+        <tr class="um-rows hidden" id="umv-${g.key}-${g.items.indexOf(it)}"><td colspan="8"></td></tr>`).join('')}</tbody>
     </table></div>
     ${list.length < g.items.length ? `<button class="btn small" type="button" data-more="${g.key}">Show all ${fmtNum(g.items.length)}</button>` : ''}</div>`;
 }
@@ -76,4 +79,26 @@ async function homeMissingAlert() {
       <button class="btn small" type="button" data-go-missing>Review</button></div>` : '';
     const b = el.querySelector('[data-go-missing]'); if (b) b.onclick = () => go('missing');
   } catch { el.innerHTML = ''; }
+}
+
+// Shows the data rows behind one value (up to 200 per report), newest first
+async function viewRows(btn) {
+  const g = UM.data.groups.find(x => x.key === btn.dataset.g), it = g.items[Number(btn.dataset.view)];
+  const tr = document.getElementById(`umv-${g.key}-${btn.dataset.view}`);
+  if (!tr.classList.contains('hidden')) { tr.classList.add('hidden'); btn.textContent = 'View rows'; return; }
+  tr.classList.remove('hidden'); btn.textContent = 'Hide rows';
+  const cell = tr.firstElementChild;
+  cell.innerHTML = '<p class="note">Loading rows…</p>';
+  const d = await api('/api/data/find', { looks: it.looks });
+  cell.innerHTML = d.results.map(r => {
+    const cols = r.columns.filter(c => r.rows.some(x => x[c] != null && x[c] !== ''));
+    const months = [...new Set(r.rows.map(x => String(x.Date || x['Sent Date'] || x.Month || '').slice(0, 7)).filter(Boolean))];
+    return `<div class="um-rowbox">
+      <p><b>${esc(r.label)}</b> <span class="note small">(sheet ${esc(r.sheet)}) · ${r.total > r.rows.length ? `showing the latest ${fmtNum(r.rows.length)} of ${fmtNum(r.total)} rows` : `${fmtNum(r.total)} row${r.total === 1 ? '' : 's'}`}</span></p>
+      <div class="tbl-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+      <tbody>${r.rows.map(x => `<tr>${cols.map(c => `<td class="${typeof x[c] === 'number' ? 'num' : ''}">${x[c] == null ? '' : esc(typeof x[c] === 'number' ? fmtNum(x[c]) : x[c])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+      <p class="note small">To correct: fix these rows in the MIS System sheet and upload it again.
+        ${months.length === 1 ? `If the whole month ${esc(fmtMonth(months[0]))} is wrong (e.g. a typing mistake in the year), <a href="#/upload" data-delmonth="${esc(r.report)}|${esc(months[0])}">delete that month</a> on the Upload page after fixing the sheet.` : 'A wrong month can be removed on the Upload page (Delete a month).'}</p></div>`;
+  }).join('');
+  cell.querySelectorAll('[data-delmonth]').forEach(a => a.onclick = () => { try { sessionStorage.setItem('mis.delmonth', a.dataset.delmonth); } catch { /* ignore */ } });
 }
