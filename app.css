@@ -318,3 +318,4 @@ tr.um-rows > td { background: var(--panel, #fafaf7); padding: 8px 10px; }
 .um-rowbox p { margin: 4px 0; }
 .del-month { margin: 10px 0 16px; }
 .del-month-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.sync-box { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 10px 14px; margin: 10px 0 18px; font-size: 13px; }

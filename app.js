@@ -481,8 +481,17 @@ function parseSheet(X, ws, cfg) {
   cols.forEach(k => { if (k.name) count[k.name.toLowerCase()] = (count[k.name.toLowerCase()] || 0) + 1; });
   if (cfg.groupRow) cols.forEach(k => { if (k.name && count[k.name.toLowerCase()] > 1 && k.group) k.name = `${k.group} | ${k.name}`; });
 
-  const named = cols.filter(k => k.name);
+  let named = cols.filter(k => k.name);
   const blank = cols.filter(k => !k.name);
+  if (cfg.erp) {
+    // ERP export: rename to the app's column names, leave out the rest
+    const amap = erpAliasMap(cfg), unused = [], dup = {};
+    named.forEach(k => { const app = amap[erpNorm(k.name)]; if (!app) unused.push(k.name); else { if (dup[app]) out.errors.push(`Columns "${dup[app]}" and "${k.name}" are both read as "${app}". Please remove one.`); dup[app] = k.name; k.name = app; } });
+    named = named.filter(k => amap[erpNorm(k.name)]);
+    const missing = cfg.erp.cols.map(c => c[0]).filter(a => !dup[a] && !(cfg.erp.optional || []).includes(a));
+    if (missing.length) out.errors.push(`Column${missing.length > 1 ? 's' : ''} missing: ${missing.map(a => `"${a}" (${cfg.erp.cols.find(c => c[0] === a).slice(1).join(' / ')})`).join(', ')}. If the ERP renamed a column, tell Claude the new name.`);
+    if (unused.length) out.info = [`Not stored: ${unused.join(', ')}`];
+  }
   out.headers = named.map(k => k.name);
   const seen = {};
   for (const k of named) {
@@ -503,6 +512,20 @@ function parseSheet(X, ws, cfg) {
     for (const k of blank) { if (val(at(r, k.c)) !== null) blankHits[k.c] = (blankHits[k.c] || 0) + 1; }
     if (!any) continue;
     if (isMaster) { out.rows.push(['1900-01', null, obj]); continue; }   // master lists: no month, whole list replaced
+    if (cfg.erp) {
+      const d = erpDate(obj[cfg.dateCol], X);
+      if (!d) { out.noMonth++; continue; }
+      obj[cfg.dateCol] = d;
+      for (const n of cfg.erp.numbers || []) if (typeof obj[n] === 'string') { const x = Number(obj[n].replace(/,/g, '')); if (isFinite(x)) obj[n] = x; }
+      for (const k of Object.keys(obj)) if (typeof obj[k] === 'string') obj[k] = obj[k].replace(/\s+/g, ' ').trim();
+      const kp = cfg.erp.keep;
+      if (kp && !kp.values.includes(String(obj[kp.col] || '').toUpperCase())) { const v = obj[kp.col] || '(blank)'; out.dropped = out.dropped || {}; out.dropped[v] = (out.dropped[v] || 0) + 1; continue; }
+      out.rows.push([d.slice(0, 7), d, obj]);
+      out.months.add(d.slice(0, 7));
+      if (!out.firstDate || d < out.firstDate) out.firstDate = d;
+      if (!out.lastDate || d > out.lastDate) out.lastDate = d;
+      continue;
+    }
     const m = obj[monthFrom];
     if (typeof m !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(m)) { out.noMonth++; continue; }
     const month = m.slice(0, 7);
@@ -514,6 +537,7 @@ function parseSheet(X, ws, cfg) {
     out.warnings.push(`Column ${X.utils.encode_col(Number(c))} has no header; its ${fmtNum(n)} values will not be loaded.`);
   }
   if (out.noMonth) out.warnings.push(`${fmtNum(out.noMonth)} rows have no valid "${monthFrom}" date and will be skipped.`);
+  if (out.dropped) out.info = [...(out.info || []), `${cfg.erp.keep.note} Left out: ${Object.entries(out.dropped).map(([k, n]) => `${k} ${fmtNum(n)} rows`).join(', ')}.`];
   if (isMaster) out.info = ['Master list: the whole list is replaced by this upload.'];
   return out;
 }
@@ -521,7 +545,7 @@ function parseSheet(X, ws, cfg) {
 async function handleFile(file) {
   if (!file || up.busy) return;
   say('');
-  if (!/\.(xlsx|xlsm|xls)$/i.test(file.name)) return say('Please choose an Excel file (.xlsx).', 'error');
+  if (!/\.(xlsx|xlsm|xls|csv)$/i.test(file.name)) return say('Please choose an Excel or CSV file.', 'error');
   up.file = file;
   up.sheets = [];
   $('checkArea').classList.remove('hidden');
@@ -531,21 +555,31 @@ async function handleFile(file) {
   $('uploadBtn').disabled = true;
   $('progress').classList.add('hidden');
   try {
-    if (!up.config) up.config = await api('/api/upload/config');
     const X = await ensureXLSX();
-    const wb = X.read(await file.arrayBuffer(), { type: 'array', cellNF: true, cellDates: false });
+    const wb = X.read(await file.arrayBuffer(), { type: 'array', cellNF: true, cellDates: false, raw: /\.csv$/i.test(file.name) });
+    await checkWorkbook(X, wb, file.name);
+  } catch (err) {
+    $('checkInfo').textContent = '';
+    say(err.message || 'Could not read the file.', 'error');
+  }
+}
+
+// Matches every sheet to a report (by sheet name, or by its column names for ERP exports), reads and checks it.
+async function checkWorkbook(X, wb, fileName) {
+    if (!up.config) up.config = await api('/api/upload/config');
     for (const name of wb.SheetNames) {
       const key = name.trim().toLowerCase();
-      const cfg = up.config.reports.find(r => r.sheet.toLowerCase() === key);
+      const cfg = up.config.reports.find(r => r.sheet.toLowerCase() === key) || erpByHeaders(X, wb.Sheets[name]);
       const entry = { sheet: name, cfg, rows: [], headers: [], months: new Set(), errors: [], warnings: [], info: [] };
       up.sheets.push(entry);
       if (!cfg) { entry.skip = up.config.skipSheets[key] || 'Not a known report sheet — skipped.'; continue; }
       if (cfg.enabled === false) { entry.skip = cfg.note || 'Not loaded at the moment.'; continue; }
       Object.assign(entry, parseSheet(X, wb.Sheets[name], cfg));
+      if (cfg.erp && !entry.rows.length && !entry.errors.length && !entry.noMonth) entry.skip = 'No rows in this file: nothing to load (for example no cancellations that day).';
     }
     const toCheck = up.sheets.filter(s => s.cfg && !s.skip && !s.errors.length);
     if (toCheck.length) {
-      const res = await api('/api/upload/check', { fileName: file.name, sheets: toCheck.map(s => ({ report: s.cfg.key, headers: s.headers, rows: s.rows.length })) });
+      const res = await api('/api/upload/check', { fileName, sheets: toCheck.map(s => ({ report: s.cfg.key, headers: s.headers, rows: s.rows.length })) });
       for (const r of res.results) {
         const s = toCheck.find(x => x.cfg.key === r.report);
         s.errors.push(...r.errors);
@@ -554,10 +588,40 @@ async function handleFile(file) {
       }
     }
     drawCheck();
-  } catch (err) {
-    $('checkInfo').textContent = '';
-    say(err.message || 'Could not read the file.', 'error');
-  }
+}
+
+// ---------- ERP exports (orders) ----------
+const erpNorm = s => String(s ?? '').toLowerCase().replace(/[\s_\-.]+/g, '');
+function erpAliasMap(cfg) {
+  const m = {};
+  cfg.erp.cols.forEach(([app, ...alts]) => [app, ...alts].forEach(a => { m[erpNorm(a)] = app; }));
+  return m;
+}
+// A sheet whose first-row headers contain an ERP report's key columns is that report (e.g. SO_ALL.csv → Sales Orders)
+function erpByHeaders(X, ws) {
+  if (!ws || !ws['!ref']) return null;
+  const R = X.utils.decode_range(ws['!ref']);
+  const heads = [];
+  for (let c = R.s.c; c <= R.e.c; c++) { const cell = ws[X.utils.encode_cell({ r: R.s.r, c })]; if (cell && cell.v != null) heads.push(String(cell.v)); }
+  return up.config.reports.find(r => {
+    if (!r.erp) return false;
+    const m = erpAliasMap(r), apps = new Set(heads.map(h => m[erpNorm(h)]).filter(Boolean));
+    return r.erp.detect.every(d => apps.has(d));
+  }) || null;
+}
+// Dates as typed in ERP files / Google Sheets → YYYY-MM-DD
+const ERP_MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+function erpDate(v, X) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'number') { const d = X.SSF.parse_date_code(v); return d ? `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}` : null; }
+  const s = String(v).trim().replace(/\s+\d{1,2}:\d{2}(:\d{2})?\s*(am|pm)?$/i, '');
+  let m;
+  const y4 = y => (y.length === 2 ? '20' + y : y), p2 = x => String(x).padStart(2, '0');
+  const ok = (y, mo, d) => { const t = `${y}-${p2(mo)}-${p2(d)}`; const dt = new Date(t + 'T00:00:00Z'); return !isNaN(dt) && dt.toISOString().slice(0, 10) === t ? t : null; };
+  if ((m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/))) return ok(m[1], m[2], m[3]);
+  if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/))) return ok(y4(m[3]), m[2], m[1]);
+  if ((m = s.match(/^(\d{1,2})[-/ ]([A-Za-z]{3})[A-Za-z]*[-/ ,]+(\d{2}|\d{4})$/)) && ERP_MON[m[2].toLowerCase()]) return ok(y4(m[3]), ERP_MON[m[2].toLowerCase()], m[1]);
+  return null;
 }
 
 function drawCheck() {
@@ -578,7 +642,7 @@ function drawCheck() {
     }
     return `<tr class="${s.skip ? 'muted-row' : ''}"><td>${esc(s.sheet)}</td><td>${s.cfg ? esc(s.cfg.label) : '–'}</td>
       <td class="num">${s.skip ? '–' : fmtNum(s.rows.length)}</td>
-      <td>${s.cfg && s.cfg.kind === 'master' ? 'Master list' : months.length ? `${fmtMonth(months[0])} – ${fmtMonth(months.at(-1))} <span class="note">(${months.length})</span>` : '–'}</td><td>${result}</td></tr>`;
+      <td>${s.cfg && s.cfg.replace === 'dates' && s.firstDate ? `${esc(fmtYmd(s.firstDate))} – ${esc(fmtYmd(s.lastDate))} <span class="note">(dates)</span>` : s.cfg && s.cfg.kind === 'master' ? 'Master list' : months.length ? `${fmtMonth(months[0])} – ${fmtMonth(months.at(-1))} <span class="note">(${months.length})</span>` : '–'}</td><td>${result}</td></tr>`;
   }).join('');
 }
 
@@ -601,7 +665,11 @@ async function startUpload() {
   const sheets = up.sheets.filter(s => s.cfg && !s.skip && !s.errors.length && s.rows.length);
   if (!sheets.length || up.busy) return;
   const total = sheets.reduce((a, s) => a + s.rows.length, 0);
-  if (!confirm(`Upload ${fmtNum(total)} rows from ${sheets.length} sheets?\n\nFor each sheet, the months in this file will replace the same months already in the system. Other months stay as they are.`)) return;
+  const byDate = sheets.filter(s => s.cfg.replace === 'dates'), byMonth = sheets.filter(s => s.cfg.replace !== 'dates');
+  if (!confirm(`Upload ${fmtNum(total)} rows from ${sheets.length} sheet${sheets.length > 1 ? 's' : ''}?\n\n` +
+    (byMonth.length ? 'Production sheets: the months in this file replace the same months already in the system.\n' : '') +
+    (byDate.length ? byDate.map(s => `${s.cfg.label}: ${fmtYmd(s.firstDate)} to ${fmtYmd(s.lastDate)} replaces the same dates already in the system.`).join('\n') + '\n' : '') +
+    'Everything else stays as it is.')) return;
   up.busy = true;
   $('uploadBtn').disabled = true; $('clearFileBtn').disabled = true;
   window.addEventListener('beforeunload', stopLeave);
@@ -706,3 +774,38 @@ function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
 
 window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', boot);
+
+// ---------- Google Sheet "MIS Orders" ----------
+// The Worker passes the sheet's values through; they are checked and uploaded exactly like a file.
+async function syncOrders() {
+  if (up.busy) return;
+  const btn = $('syncBtn'); btn.disabled = true; btn.textContent = 'Reading…';
+  say('');
+  try {
+    const info = await api('/api/orders/sheet');
+    if (!info.configured) throw new Error(info.message + ' Ask Claude to finish the set-up.');
+    const X = await ensureXLSX();
+    const wb = { SheetNames: [], Sheets: {} };
+    const wanted = up.config ? up.config.reports.filter(r => r.erp).map(r => r.sheet) : ['SO', 'Cancel', 'DC'];
+    for (const tab of info.tabs.filter(t => wanted.some(w => w.toLowerCase() === t.toLowerCase()))) {
+      const d = await api(`/api/orders/sheet?tab=${encodeURIComponent(tab)}`).catch(err => { throw new Error(`Tab ${tab}: ${err.message}`); });
+      if (!d.values || d.values.length < 2) continue;   // empty tab
+      wb.SheetNames.push(tab);
+      wb.Sheets[tab] = X.utils.aoa_to_sheet(d.values);
+    }
+    if (!wb.SheetNames.length) throw new Error('The tabs SO, Cancel and DC of the MIS Orders sheet are empty.');
+    up.file = { name: `Google Sheet: ${info.title}` };
+    up.sheets = [];
+    $('checkArea').classList.remove('hidden');
+    $('checkFile').textContent = up.file.name;
+    $('checkInfo').textContent = 'Checking…';
+    $('checkRows').innerHTML = '';
+    $('uploadBtn').disabled = true;
+    $('progress').classList.add('hidden');
+    await checkWorkbook(X, wb, up.file.name);
+    say('Sheet read. Check the result below, then press Upload.', 'ok');
+  } catch (err) { say(err.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Sync now'; }
+}
+$('syncBtn').addEventListener('click', syncOrders);
+function fmtYmd(d) { if (!d) return ''; const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }
