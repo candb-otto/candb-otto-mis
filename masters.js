@@ -43,7 +43,8 @@ const msDef = () => MS.defs.find(x => x.key === MS.key);
 
 function drawMasters() {
   const def = msDef();
-  $('msTabs').innerHTML = MS.defs.map(x => `<button type="button" class="ms-tab ${x.key === MS.key ? 'on' : ''}" data-k="${x.key}">${esc(x.label)}<small>${fmtNum(x.key === MS.key ? MS.rows.length : x.rows)}</small></button>`).join('');
+  const groups = [...new Set(MS.defs.map(x => x.group || 'Other'))];
+  $('msTabs').innerHTML = groups.map(g => `<div class="ms-group"><span class="ms-group-name">${esc(g)}</span>${MS.defs.filter(x => (x.group || 'Other') === g).map(x => `<button type="button" class="ms-tab ${x.key === MS.key ? 'on' : ''}" data-k="${x.key}">${esc(x.label)}<small>${fmtNum(x.key === MS.key ? MS.rows.length : x.rows)}</small></button>`).join('')}</div>`).join('');
   $('msTabs').querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
     if (b.dataset.k === MS.key) return;
     if (MS.dirty && !confirm('You have changes that are not saved. Leave them?')) return;
@@ -59,6 +60,8 @@ function drawMasters() {
       <div><h2>${esc(def.label)}</h2><p class="note small">${esc(def.desc)}</p><p class="note small">${saved}</p></div>
       <div class="ms-actions">
         <span class="ms-dirty ${MS.dirty ? '' : 'hidden'}" id="msDirty">Changes not saved</span>
+        <button class="btn" type="button" id="msFromSheet" title="Read the tab ${esc(def.tab || '')} of the MIS System Google Sheet into this list. Nothing is saved until you press Save.">Load from Sheet</button>
+        <button class="btn" type="button" id="msToSheet" title="Write the saved list to the tab ${esc(def.tab || '')} of the MIS System Google Sheet" ${MS.dirty ? 'disabled' : ''}>Copy to Sheet</button>
         <button class="btn" type="button" id="msExcel">Download Excel</button>
         <button class="btn" type="button" id="msCancel" ${MS.dirty ? '' : 'disabled'}>Cancel changes</button>
         <button class="btn primary" type="button" id="msSave" ${MS.dirty ? '' : 'disabled'}>Save</button>
@@ -82,6 +85,8 @@ function drawMasters() {
   $('msSave').onclick = saveMaster;
   $('msCancel').onclick = () => { if (confirm('Undo all changes since the last save?')) { MS.dirty = false; openMaster(MS.key).catch(err => say(err.message, 'error')); } };
   $('msExcel').onclick = () => downloadMaster().catch(err => say(err.message, 'error'));
+  $('msFromSheet').onclick = () => loadFromSheet().catch(err => say(err.message, 'error'));
+  $('msToSheet').onclick = () => copyToSheet().catch(err => say(err.message, 'error'));
   $('msSearch').oninput = e => { MS.search = e.target.value; MS.page = 1; drawRows(); };
   if (hasProc) $('msProc').onchange = e => { MS.proc = e.target.value; MS.page = 1; drawRows(); };
   if (def.dated) $('msCopy').onclick = copyMonth;
@@ -174,7 +179,7 @@ function msPager(total) {
 function markDirty() {
   if (!MS.dirty) { MS.dirty = true; window.addEventListener('beforeunload', stopLeave); }
   $('msDirty').classList.remove('hidden');
-  $('msSave').disabled = false; $('msCancel').disabled = false;
+  $('msSave').disabled = false; $('msCancel').disabled = false; $('msToSheet').disabled = true;
   const tab = $('msTabs').querySelector('.on small'); if (tab) tab.textContent = fmtNum(MS.rows.length);
 }
 
@@ -222,6 +227,7 @@ function checkRows() {
       }
       if (c.pattern && !new RegExp(c.pattern).test(String(v))) put(r, n, c.name, `"${c.name}" should look like ${c.help || c.pattern}.`);
     }
+    if (r['From Day'] != null && r['To Day'] != null && r['To Day'] !== '' && Number(r['To Day']) < Number(r['From Day'])) put(r, n, 'To Day', '"To Day" is less than "From Day".');
     if (r['Effective From'] && r['Effective To'] && r['Effective To'] < r['Effective From']) put(r, n, 'Effective To', '"Effective To" is before "Effective From".');
     const k = def.unique.map(u => String(r[u] ?? '').toLowerCase()).join('|');
     if (seen.has(k)) put(r, n, def.unique[def.unique.length - 1], `same ${def.unique.join(' + ')} as row ${seen.get(k)}.`);
@@ -251,7 +257,7 @@ async function saveMaster() {
     MS.dirty = false;
     const def = msDef(); def.rows = d.rows; def.lastUpdated = d.version; def.updatedBy = state.user.loginId;
     await openMaster(MS.key);
-    say(`${def.label} saved: ${fmtNum(d.rows)} rows. Reports use the new list straight away.`, 'ok');
+    say(`${def.label} saved: ${fmtNum(d.rows)} rows. Reports use the new list straight away.` + (d.sheet ? ' ' + d.sheet.message : ''), d.sheet && !d.sheet.ok ? 'error' : 'ok');
   } catch (err) {
     say(err.message, 'error');
     btn.disabled = false; btn.textContent = 'Save';
@@ -266,4 +272,35 @@ async function downloadMaster() {
   const wb = X.utils.book_new();
   X.utils.book_append_sheet(wb, ws, def.label.slice(0, 31));
   X.writeFile(wb, `${def.label} - ${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+// Reads the list's tab from the MIS System Google Sheet into the screen as unsaved changes
+async function loadFromSheet() {
+  const def = msDef();
+  if (MS.dirty && !confirm('You have changes that are not saved. Replace them with the rows from the Google Sheet?')) return;
+  if (!MS.dirty && !confirm(`Load the rows from the Google Sheet tab "${def.tab}"? They replace the list on screen. Nothing is saved until you press Save.`)) return;
+  const btn = $('msFromSheet'); btn.disabled = true; btn.textContent = 'Loading…';
+  try {
+    const d = await api('/api/masters/fromsheet', { key: MS.key });
+    MS.rows = d.rows.map(r => ({ ...r, _id: ++msSeq }));
+    MS.search = ''; MS.proc = ''; MS.page = 1; MS.errors = {};
+    markDirty(); drawMasters();
+    const { errs, list } = checkRows();
+    MS.errors = errs; drawRows();
+    const all = [...new Set([...(d.errors || []), ...list])];
+    drawErrors(all);
+    const extra = d.unknownColumns && d.unknownColumns.length ? ` Columns not used: ${d.unknownColumns.join(', ')}.` : '';
+    say(all.length ? `${fmtNum(d.rows.length)} rows read from "${d.tab}". Some rows need correcting before you can save.${extra}`
+      : `${fmtNum(d.rows.length)} rows read from "${d.tab}". Check them, then press Save.${extra}`, all.length ? 'error' : 'ok');
+  } finally { const b = $('msFromSheet'); if (b) { b.disabled = false; b.textContent = 'Load from Sheet'; } }
+}
+
+// Writes the saved list to its tab in the MIS System Google Sheet
+async function copyToSheet() {
+  const btn = $('msToSheet'); btn.disabled = true; btn.textContent = 'Copying…';
+  try {
+    const d = await api('/api/masters/tosheet', { key: MS.key }).catch(err => ({ ok: false, results: [{ ok: false, message: err.message }] }));
+    const r = d.results && d.results[0];
+    say(r ? r.message : 'Could not copy.', r && r.ok ? 'ok' : 'error');
+  } finally { btn.disabled = false; btn.textContent = 'Copy to Sheet'; }
 }
