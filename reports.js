@@ -13,8 +13,13 @@ const MODULE_REPORTS = {
     { key: 'washing', name: 'Washing', def: () => WashingV2 },          // MIS System data and metrics
     { key: 'packing', name: 'Packing', def: () => PackingV2 },          // MIS System data, targets and metrics
   ],
+  orders: [
+    { key: 'seasonal', name: 'Seasonal Fulfilment', def: () => OrderSeasonal },
+    { key: 'core', name: 'Core Fulfilment', def: () => OrderCore },
+    { key: 'dispatch', name: 'DC Dispatch', def: () => OrderDispatch },
+  ],
 };
-const MODULE_NAMES = { production: 'Production' };
+const MODULE_NAMES = { production: 'Production', orders: 'Order Fulfilment' };
 const REPNAV_KEY = 'mis.repnavOpen';
 const CMP_KEY = 'mis.compareWith';
 
@@ -71,7 +76,7 @@ async function loadModule(modKey, repKey) {
     const m = await api(`/api/months?${qs({ report: def.sources })}`);
     rp.months = m.months; rp.lastUpdated = m.lastUpdated;
     if (!rp.months.length) { $('repBody').innerHTML = '<div class="card"><p class="empty">No data uploaded yet for this report. Use <b>Upload data</b> first.</p></div>'; return; }
-    if (changed || !rp.period) rp.period = { from: rp.months[0], to: rp.months[0] };
+    if (changed || !rp.period) rp.period = def.defaultPeriod ? def.defaultPeriod(rp.months) : { from: rp.months[0], to: rp.months[0] };
     await refreshReport();
   } catch (err) { say(err.message, 'error'); }
 }
@@ -145,7 +150,7 @@ function drawReport(data) {
         ${downloadMenuHtml()}
       </div>
     </header>
-    <p class="compare">${esc(periodLabel(rp.period))} ${esc(cmpText)}${def.note ? ' · ' + def.note : ''}</p>
+    <p class="compare">${esc(periodLabel(rp.period))}${def.noCompare ? '' : ' ' + esc(cmpText)}${def.note ? ' · ' + def.note : ''}</p>
     ${filterChips ? `<div class="chips">${filterChips}<span class="note small">Click a bar again to remove its filter.</span></div>` : '<p class="note small hint">Tip: click any bar or table row to filter the whole page.</p>'}
     <div class="tiles" id="repTiles"></div>
     <div id="repCharts"></div>

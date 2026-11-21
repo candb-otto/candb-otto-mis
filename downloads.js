@@ -56,7 +56,7 @@ function harvest(repName) {
   }));
   const summaryTitle = ($('repSummary').querySelector('h2') || {}).textContent || 'Summary';
   return {
-    name: repName, module: MODULE_NAMES[rp.module], period: periodLabel(rp.period), compare: rp.def && rp.def.compareModes && !rp.def.noTarget && rp.compareMode === 'target' ? 'Target' : rp.def && rp.def.compareModes && rp.compareMode === 'ly' ? periodLabel({ from: addMonths(rp.period.from, -12), to: addMonths(rp.period.to, -12) }) : periodLabel(compareOf(rp.period)),
+    name: repName, module: MODULE_NAMES[rp.module], period: periodLabel(rp.period), compare: rp.def && rp.def.noCompare ? 'Not compared (orders placed in the period)' : rp.def && rp.def.compareModes && !rp.def.noTarget && rp.compareMode === 'target' ? 'Target' : rp.def && rp.def.compareModes && rp.compareMode === 'ly' ? periodLabel({ from: addMonths(rp.period.from, -12), to: addMonths(rp.period.to, -12) }) : periodLabel(compareOf(rp.period)),
     lastUpdated: rp.lastUpdated ? fmtDate(rp.lastUpdated) : '–', filters, tiles, charts,
     summaryTitle, summary: tableModel($('repSummary').querySelector('table')),
     extraTables: [...$('repSummary').querySelectorAll('table')].slice(1).map(t => {
