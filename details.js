@@ -1,12 +1,13 @@
 // MIS Master System - View Details for heavy-data modules: reads the month's Google Sheet page by page.
-async function fetchSheetDetail(module, dataset, period) {
+async function fetchSheetDetail(module, dataset, period, onProgress) {
   const box = $('repDetails');
   const months = monthSeq(period.from, period.to);
   let columns = null;
   const rows = [];
   for (const month of months) {
     for (let start = 1; ; start += 5000) {
-      if (box) box.innerHTML = `<p class="note">Loading from Google Sheets, this is slower than the reports… ${esc(fmtMonth(month))} · ${fmtNum(rows.length)} rows so far</p>`;
+      const msg = `<p class="note">Loading from Google Sheets, this is slower than the reports… ${esc(fmtMonth(month))} · ${fmtNum(rows.length)} rows so far</p>`;
+      if (onProgress) onProgress(msg); else if (box) box.innerHTML = msg;
       const d = await api(`/api/detail/read?module=${module}&month=${month}&dataset=${dataset}&start=${start}&limit=5000`);
       const v = d.sheet ? d.sheet.values || [] : d.values || [];
       if (!v.length) break;

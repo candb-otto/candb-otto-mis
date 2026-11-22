@@ -342,3 +342,5 @@ tr.um-rows > td { background: var(--panel, #fafaf7); padding: 8px 10px; }
 
 #storeBox > div { min-width: 0; flex: 1; }
 .store-table { margin-top: 8px; }
+
+.store-btns { display: inline-flex; flex-wrap: wrap; gap: 8px; }

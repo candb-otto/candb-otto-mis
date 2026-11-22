@@ -798,3 +798,22 @@ async function checkStorage() {
   finally { btn.disabled = false; btn.textContent = 'Check storage'; }
 }
 $('storeBtn').addEventListener('click', checkStorage);
+
+// ---------- move old monthly sheets to Archive ----------
+async function archiveOldSheets() {
+  const btn = $('archiveBtn');
+  btn.disabled = true; btn.textContent = 'Archiving…';
+  try {
+    const d = await api('/api/store/archive', {});
+    if (!d.configured) throw new Error(d.message);
+    const parts = [];
+    if (d.moved.length) parts.push(`Moved to Archive: ${d.moved.join(', ')}.`);
+    if (d.skipped.length) parts.push(`Already in Archive, left in Active: ${d.skipped.join(', ')}.`);
+    if (d.failed.length) parts.push(`Could not move: ${d.failed.map(f => `${f.name} (${f.reason})`).join('; ')}.`);
+    if (d.more) parts.push(`${d.more} more will move on the next run.`);
+    say(parts.join(' ') || `Nothing to move. Sheets from ${fmtMonth(d.cutoff)} onward stay in Active.`, d.failed.length || d.skipped.length ? 'error' : 'ok');
+    if ($('storeResult').innerHTML) await checkStorage();
+  } catch (err) { say(err.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Archive old sheets'; }
+}
+$('archiveBtn').addEventListener('click', archiveOldSheets);

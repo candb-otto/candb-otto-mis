@@ -186,7 +186,9 @@ async function heavySave(cfg) {
     }
     if (failed.length) throw new Error(`Reports are updated, but View Details for ${failed.join(', ')} could not be switched. Please upload the same file again.`);
     $('progress').classList.add('hidden');
-    say(`Upload complete: ${fmtNum(cfg.rowsRead)} rows, ${fmtNum(fin.summaryRows)} summary rows saved.`, 'ok');
+    const arch = await api('/api/store/archive', {}).catch(() => null);
+    const archText = arch && arch.moved && arch.moved.length ? ` Moved to Archive: ${arch.moved.join(', ')}.` : '';
+    say(`Upload complete: ${fmtNum(cfg.rowsRead)} rows, ${fmtNum(fin.summaryRows)} summary rows saved.${archText}`, 'ok');
     SU.plan = null; $('heavyCheck').innerHTML = ''; $('fileInput').value = '';
     if (typeof rp !== 'undefined') rp.cache = {};
     if (typeof UM !== 'undefined') UM.data = null;

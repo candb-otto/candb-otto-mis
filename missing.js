@@ -89,7 +89,7 @@ async function viewRows(btn) {
   tr.classList.remove('hidden'); btn.textContent = 'Hide rows';
   const cell = tr.firstElementChild;
   cell.innerHTML = '<p class="note">Loading rows…</p>';
-  const d = await api('/api/data/find', { looks: it.looks });
+  const d = it.looks[0] && it.looks[0].sheet ? { results: await readSheetLooks(it.looks, html => { cell.innerHTML = html; }) } : await api('/api/data/find', { looks: it.looks });
   cell.innerHTML = d.results.map(r => {
     const cols = r.columns.filter(c => r.rows.some(x => x[c] != null && x[c] !== ''));
     const months = [...new Set(r.rows.map(x => String(x.Date || x['Sent Date'] || x.Month || '').slice(0, 7)).filter(Boolean))];
@@ -97,8 +97,37 @@ async function viewRows(btn) {
       <p><b>${esc(r.label)}</b> <span class="note small">(sheet ${esc(r.sheet)}) · ${r.total > r.rows.length ? `showing the latest ${fmtNum(r.rows.length)} of ${fmtNum(r.total)} rows` : `${fmtNum(r.total)} row${r.total === 1 ? '' : 's'}`}</span></p>
       <div class="tbl-wrap"><table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
       <tbody>${r.rows.map(x => `<tr>${cols.map(c => `<td class="${typeof x[c] === 'number' ? 'num' : ''}">${x[c] == null ? '' : esc(typeof x[c] === 'number' ? fmtNum(x[c]) : x[c])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-      <p class="note small">To correct: fix these rows in the MIS System sheet and upload it again.
-        ${months.length === 1 ? `If the whole month ${esc(fmtMonth(months[0]))} is wrong (e.g. a typing mistake in the year), <a href="#/upload" data-delmonth="${esc(r.report)}|${esc(months[0])}">delete that month</a> on the Upload page after fixing the sheet.` : 'A wrong month can be removed on the Upload page (Delete a month).'}</p></div>`;
-  }).join('');
+      ${r.fromSheet ? `<p class="note small">To correct: fix these rows in the ERP file and upload that date again, or use Add to master if the value is correct.</p></div>` : `<p class="note small">To correct: fix these rows in the MIS System sheet and upload it again.
+        ${months.length === 1 ? `If the whole month ${esc(fmtMonth(months[0]))} is wrong (e.g. a typing mistake in the year), <a href="#/upload" data-delmonth="${esc(r.report)}|${esc(months[0])}">delete that month</a> on the Upload page after fixing the sheet.` : 'A wrong month can be removed on the Upload page (Delete a month).'}</p></div>`}`;
+  }).join('') || '<p class="note">No rows found.</p>';
   cell.querySelectorAll('[data-delmonth]').forEach(a => a.onclick = () => { try { sessionStorage.setItem('mis.delmonth', a.dataset.delmonth); } catch { /* ignore */ } });
+}
+
+// Order and invoice values: the rows are read from the monthly Google Sheets, newest first (up to 200 per data type)
+const UM_SHEET = {
+  ord_order: { module: 'orders', dataset: 'SO', label: 'Sales Orders', order: 'SO No', date: 'Order Date', qty: 'Order Qty', section: 'Section', dept: 'Dept', brand: 'Brand', site: 'Site' },
+  ord_cancel: { module: 'orders', dataset: 'Cancel', label: 'Order Cancellations', order: 'Order No', date: 'Cancel Date', qty: 'Cancel Qty', section: 'Section', dept: 'Dept', brand: 'Brand', site: 'Site' },
+  ord_dc: { module: 'orders', dataset: 'DC', label: 'DC', order: 'Order No', date: 'DC Date', qty: 'DC Qty', section: 'Section', dept: 'Dept', brand: 'Brand', site: 'Site' },
+  ord_invoice: { module: 'sales', dataset: 'Sales', label: 'Invoices', order: 'SO', date: 'Invoice Date', qty: 'Invoice Qty', section: 'SECTION', dept: 'DEPARTMENT', brand: 'Category5', site: 'Source Site' },
+};
+async function readSheetLooks(looks, onProgress) {
+  const out = [];
+  for (const lk of looks) {
+    const S = UM_SHEET[lk.report], m = lk.match || {};
+    if (!S) continue;
+    const raw = await fetchSheetDetail(S.module, S.dataset, { from: lk.from.slice(0, 7), to: lk.to.slice(0, 7) }, onProgress);
+    const same = (a, b) => OKey(a) === OKey(b);
+    const rows = raw.rows.filter(r => {
+      const d = String(r[S.date] || '').slice(0, 10);
+      if (d < lk.from || d > lk.to) return false;
+      if (!m.anyOrder && !String(r[S.order] ?? '').trim()) return false;
+      if (m.prefix != null && prefixOf(r[S.order]) !== String(m.prefix).toUpperCase()) return false;
+      if (m.section != null && !(same(r[S.section], m.section) && same(r[S.dept], m.dept) && same(r[S.brand], m.brand))) return false;
+      if (m.site != null && !same(r[S.site], m.site)) return false;
+      if (m.stockPoint != null && !same(r['Stock Point'], m.stockPoint)) return false;
+      return true;
+    }).sort((a, b) => String(b[S.date]).localeCompare(String(a[S.date])));
+    out.push({ report: lk.report, label: S.label, sheet: `${S.module === 'sales' ? 'Sales' : 'Orders'} monthly, ${S.dataset}`, columns: raw.columns, total: rows.length, rows: rows.slice(0, 200), fromSheet: true, qty: rows.reduce((a, r) => a + (Number(r[S.qty]) || 0), 0) });
+  }
+  return out;
 }
