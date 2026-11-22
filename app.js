@@ -810,3 +810,23 @@ async function syncOrders() {
 }
 $('syncBtn').addEventListener('click', syncOrders);
 function fmtYmd(d) { if (!d) return ''; const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }
+
+// ---------- monthly detail storage check ----------
+async function checkStorage() {
+  const btn = $('storeBtn'), box = $('storeResult');
+  btn.disabled = true; btn.textContent = 'Checking…'; box.innerHTML = '';
+  try {
+    const d = await api('/api/store/check', {});
+    if (!d.configured) throw new Error(d.message);
+    const ok = v => (v ? '<span class="pill good">Yes</span>' : '<span class="pill bad">No</span>');
+    box.innerHTML = `<div class="tbl-wrap store-table"><table><thead><tr><th>Folder</th><th class="num">Files</th><th>Can add</th><th>Can move out</th></tr></thead>
+      <tbody>${d.folders.map(f => `<tr><td>${esc(f.label)}</td><td class="num">${fmtNum(f.count)}</td><td>${ok(f.canAdd)}</td><td>${ok(f.canRemove)}</td></tr>`).join('')}</tbody></table></div>
+      ${d.sheets.length ? `<div class="tbl-wrap store-table"><table><thead><tr><th>Monthly sheet</th><th>Folder</th><th class="num">Tabs</th><th class="num">Cells used</th><th>Can edit</th></tr></thead>
+      <tbody>${d.sheets.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.folder)}</td><td class="num">${fmtNum(s.tabs)}</td><td class="num">${fmtNum(s.cells)} (${(s.pct * 100).toFixed(1)}%)${s.warn ? ' <span class="pill warn">Near limit</span>' : ''}</td><td>${ok(s.canEdit)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="note small">No monthly sheets yet. Create them in Active, named like Sales_2026_11 or Orders_2026_11.</p>'}
+      ${d.other.length ? `<p class="note small">Not used (name does not match): ${esc(d.other.join(', '))}</p>` : ''}
+      ${d.duplicates.length ? `<p class="status error">Same name in more than one place: ${esc(d.duplicates.join(', '))}</p>` : ''}`;
+    say('Storage connection is working.', 'ok');
+  } catch (err) { say(err.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Check storage'; }
+}
+$('storeBtn').addEventListener('click', checkStorage);
