@@ -329,7 +329,7 @@ function drawHome(modules) {
   const months = modules.flatMap(m => m.kpis.map(k => k.month)).filter(Boolean).sort();
   if (months.length) $('homeSub').textContent += ` · Data up to ${fmtMonth(months.at(-1))}`;
   $('modGrid').innerHTML = modules.map(m => {
-    const icon = `<span class="mod-icon"><svg viewBox="0 0 24 24">${MOD_ICONS[m.key] || ''}</svg></span>`;
+    const icon = `<span class="mod-icon"><svg viewBox="0 0 24 24">${Icons.module(m.key)}</svg></span>`;
     if (!m.live) {
       return `<div class="mod soon">
         <div class="mod-top">${icon}<div><p class="mod-name">${esc(m.name)}</p><p class="mod-desc">${esc(m.desc)}</p></div></div>

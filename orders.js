@@ -53,10 +53,13 @@ const ORD = {
   async loadLines(p, keepType) {
     const M = await this.loadMasters();
     const latest = [p.to, ...(rp.months || [])].sort().pop();
+    // A data set with nothing loaded yet counts as empty; any real read error is shown to the user.
+    const loaded = async r => (await api(`/api/months?report=${r}`)).months.length > 0;
+    const [hasCancel, hasDc] = await Promise.all([loaded('ord_cancel'), loaded('ord_dc')]);
     const [so, cn, dc] = await Promise.all([
       agg({ report: 'ord_so', from: p.from, to: p.to, by: ['SO No', 'Section', 'Dept', 'Brand', 'Site', 'date'], sum: ['Order Qty'] }),
-      agg({ report: 'ord_cancel', from: p.from, to: latest, by: ['Order No', 'Section', 'Dept', 'Brand'], sum: ['Cancel Qty'] }).catch(() => ({ rows: [] })),
-      agg({ report: 'ord_dc', from: p.from, to: latest, by: ['Order No', 'Section', 'Dept', 'Brand', 'date'], sum: ['DC Qty'] }).catch(() => ({ rows: [] })),
+      hasCancel ? agg({ report: 'ord_cancel', from: p.from, to: latest, by: ['Order No', 'Section', 'Dept', 'Brand'], sum: ['Cancel Qty'] }) : { rows: [] },
+      hasDc ? agg({ report: 'ord_dc', from: p.from, to: latest, by: ['Order No', 'Section', 'Dept', 'Brand', 'date'], sum: ['DC Qty'] }) : { rows: [] },
     ]);
     const lines = new Map();
     for (const [no, sec, dept, br, site, date, qty] of so.rows) {

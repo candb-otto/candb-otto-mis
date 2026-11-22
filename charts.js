@@ -95,18 +95,35 @@ const Charts = (() => {
     setMode(!!Charts.tableMode[opts.id]);
     return { area, table };
   }
-  const widthOf = (area, host) => Math.max(260, area.clientWidth || host.clientWidth || 400);
+  const widthOf = (area, host) => {
+    const cs = getComputedStyle(host);
+    const inner = host.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    return Math.max(200, Math.floor(area.clientWidth || inner || 400));
+  };
 
   // Legend drawn inside the SVG (one row, wraps). entries: [{label, color, kind: 'box'|'line'|'dash'}]
+  const legendText = (label, maxW) => truncate(label, Math.max(6, Math.floor((maxW - 36) / 6.4)));
+  function legendRows(entries, maxW) {
+    let x = 0, rows = 1;
+    for (const e of entries) {
+      const w = 36 + legendText(e.label, maxW).length * 6.4;
+      if (x + w > maxW && x > 0) { x = 0; rows++; }
+      x += w;
+    }
+    return rows;
+  }
   function svgLegend(svg, entries, x0, y0, maxW) {
     let x = x0, y = y0;
     for (const e of entries) {
-      const w = 22 + String(e.label).length * 6.4 + 14;
+      const text = legendText(e.label, maxW);
+      const w = 22 + text.length * 6.4 + 14;
       if (x + w > x0 + maxW && x > x0) { x = x0; y += 18; }
       if (e.kind === 'line') { el('line', { x1: x, x2: x + 14, y1: y - 4, y2: y - 4, stroke: e.color, 'stroke-width': 2 }, svg); el('circle', { cx: x + 7, cy: y - 4, r: 3, fill: e.color }, svg); }
       else if (e.kind === 'dash') el('line', { x1: x, x2: x + 14, y1: y - 4, y2: y - 4, stroke: e.color, 'stroke-width': 1.5, 'stroke-dasharray': '4 3' }, svg);
       else el('rect', { x, y: y - 9, width: 10, height: 10, rx: 2, fill: e.color }, svg);
-      el('text', { x: x + 20, y, class: 'viz-legend-t' }, svg).textContent = e.label;
+      const lt = el('text', { x: x + 20, y, class: 'viz-legend-t' }, svg);
+      lt.textContent = text;
+      if (text !== String(e.label)) el('title', {}, lt).textContent = e.label;
       x += w;
     }
     return y - y0 + 18; // height used
@@ -142,9 +159,11 @@ const Charts = (() => {
     if (!items.length) { area.innerHTML = '<p class="empty">No data for this selection.</p>'; return; }
     const W = widthOf(area, host);
     // Label space fits the longest name (up to 42% of the width); longer names are shortened with "…"
-    const longest = Math.max(...items.map(d => String(d.label).length));
-    const rowH = 26, gap = 2, top = 4, valueW = 64, CH = 6.8;
-    const labelW = Math.round(Math.min(W * 0.42, Math.max(70, longest * CH + 14)));
+    const textW = t => [...String(t)].reduce((a, c) => a + (/[A-Z0-9]/.test(c) ? 8 : 6.3), 0);
+    const valueOf = d => String(opts.valueText ? opts.valueText(d) : compact(d.value || 0));
+    const rowH = 26, gap = 2, top = 4, CH = 6.8;
+    const valueW = Math.max(52, Math.max(...items.map(d => valueOf(d).length)) * 7.2 + 16);
+    const labelW = Math.round(Math.min(W * 0.42, Math.max(70, Math.max(...items.map(d => textW(d.label))) + 14)));
     const H = top + items.length * (rowH + gap) + 18;
     const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: 'viz-svg', role: 'img', 'aria-label': opts.title });
     const max = niceMax(Math.max(...items.map(d => d.value || 0)));
@@ -160,11 +179,11 @@ const Charts = (() => {
       const dim = opts.selected != null && opts.selected !== d.key;
       el('rect', { x: 0, y, width: W, height: rowH, class: 'viz-hit', fill: 'transparent' }, g);
       const label = el('text', { x: x0 - 8, y: y + rowH / 2 + 4, 'text-anchor': 'end', class: 'viz-cat' + (dim ? ' dim' : '') }, g);
-      label.textContent = truncate(d.label, Math.floor((labelW - 12) / CH));
+      label.textContent = truncate(d.label, Math.floor((labelW - 14) / Math.max(CH, textW(d.label) / Math.max(1, String(d.label).length))));
       if (String(d.label) !== label.textContent) el('title', {}, label).textContent = d.label;
       const w = plotW * (d.value || 0) / max;
       el('path', { d: barPath(x0, y + 5, Math.max(w, d.value ? 1.5 : 0), rowH - 10, true), class: 'viz-mark' + (dim ? ' dim' : ''), fill: d.color || 'var(--s1)' }, g);
-      el('text', { x: x0 + w + 6, y: y + rowH / 2 + 4, class: 'viz-val' + (dim ? ' dim' : '') }, g).textContent = opts.valueText ? opts.valueText(d) : compact(d.value || 0);
+      el('text', { x: x0 + w + 6, y: y + rowH / 2 + 4, class: 'viz-val' + (dim ? ' dim' : '') }, g).textContent = valueOf(d);
       wire(g, d, opts, opts.tip || defaultTip(opts));
     });
     area.appendChild(svg);
@@ -182,9 +201,9 @@ const Charts = (() => {
     const legend = [{ label: opts.valueLabel || 'Value', color: opts.color || 'var(--s1)', kind: 'box' }];
     if (opts.lineLabel) legend.push({ label: opts.lineLabel, color: 'var(--s3)', kind: 'line' });
     if (opts.avg) legend.push({ label: `${opts.avg.label} ${compact(opts.avg.value)}`, color: 'var(--ink)', kind: 'dash' });
-    const legendH = legend.length > 1 ? 22 : 0;
-    const H = (opts.height || 220) + legendH;
-    const left = 44, right = 6, top = 10 + legendH, bottom = 26;
+    const left = 44, right = 6, bottom = 26;
+    const legendH = legend.length > 1 ? 4 + 18 * legendRows(legend, W - left) : 0;
+    const H = (opts.height || 220) + legendH, top = 10 + legendH;
     const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: 'viz-svg', role: 'img', 'aria-label': opts.title });
     if (legendH) svgLegend(svg, legend, left, 14, W - left);
     const max = niceMax(Math.max(...items.map(d => Math.max(d.value || 0, d.line || 0)), opts.avg ? opts.avg.value : 0));
@@ -280,8 +299,8 @@ const Charts = (() => {
     wireTable(table, cats, opts);
     if (!cats.length) { area.innerHTML = '<p class="empty">No data for this selection.</p>'; return; }
     const W = widthOf(area, host);
-    const legendH = 22, H = (opts.height || 220) + legendH;
-    const left = 44, right = 6, top = 10 + legendH, bottom = 26;
+    const left = 44, right = 6, bottom = 26;
+    const legendH = 4 + 18 * legendRows(series, W - left), H = (opts.height || 220) + legendH, top = 10 + legendH;
     const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: 'viz-svg', role: 'img', 'aria-label': opts.title });
     svgLegend(svg, series.map(s => ({ label: s.label, color: s.color, kind: 'box' })), left, 14, W - left);
     const group = opts.mode === 'group';
@@ -335,7 +354,11 @@ const Charts = (() => {
       <tr><td>Target</td><td class="num">${g.target ? opts.fmt(g.target) : '–'}</td></tr>
       <tr><td>Achieved</td><td class="num">${pct == null ? '–' : (pct * 100).toFixed(1) + '%'}</td></tr></tbody></table>`;
     if (pct == null) { area.innerHTML = '<p class="empty">No target set for this selection.</p>'; return; }
-    const W = widthOf(area, host), H = 190, cx = W / 2, cy = 128, R = 96, r = 66, MAX = 1.2;
+    const W = widthOf(area, host), MAX = 1.2;
+    const R = Math.round(Math.min(96, Math.max(56, (W / 2 - 46) / 0.866 - 10))), r = Math.round(R * 0.69);
+    const actualLine = `${opts.actualLabel || 'Actual'} ${opts.fmt(g.actual)}`, targetLine = `Target ${opts.fmt(g.target)}`;
+    const twoLines = (actualLine.length + targetLine.length + 5) * 6.8 > W - 8;
+    const cx = W / 2, cy = R + 32, H = cy + (twoLines ? 80 : 62);
     const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: 'viz-svg', role: 'img', 'aria-label': opts.title });
     const pt = (rad, f) => { const a = Math.PI * (1 - f); return [cx + rad * Math.cos(a), cy - rad * Math.sin(a)]; };
     const band = (f1, f2, fill) => {
@@ -355,8 +378,12 @@ const Charts = (() => {
     el('text', { x: cx, y: cy + 4, 'text-anchor': 'middle', class: 'viz-tick' }, svg).textContent = 'of target';
     el('text', { x: cx - R, y: cy + 20, 'text-anchor': 'middle', class: 'viz-tick' }, svg).textContent = '0%';
     el('text', { x: cx + R, y: cy + 20, 'text-anchor': 'middle', class: 'viz-tick' }, svg).textContent = '120%';
-    el('text', { x: cx, y: cy + 46, 'text-anchor': 'middle', class: 'viz-cat' }, svg).textContent =
-      `${opts.actualLabel || 'Actual'} ${opts.fmt(g.actual)}  ·  Target ${opts.fmt(g.target)}`;
+    if (twoLines) {
+      el('text', { x: cx, y: cy + 44, 'text-anchor': 'middle', class: 'viz-cat' }, svg).textContent = actualLine;
+      el('text', { x: cx, y: cy + 62, 'text-anchor': 'middle', class: 'viz-cat' }, svg).textContent = targetLine;
+    } else {
+      el('text', { x: cx, y: cy + 46, 'text-anchor': 'middle', class: 'viz-cat' }, svg).textContent = `${actualLine}  ·  ${targetLine}`;
+    }
     area.appendChild(svg);
   }
 
@@ -364,5 +391,24 @@ const Charts = (() => {
   function escHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
   function escAttr(s) { return escHtml(s); }
 
-  return { barsH, barsV, donut, columns, gauge, colorMap, compact, hideTip, SLOTS, OTHER, tableMode: {} };
+  const drawn = new Map();
+  let resizeTimer = null;
+  const redrawChanged = () => {
+    for (const [host, d] of drawn) {
+      if (!host.isConnected) { drawn.delete(host); if (observer) observer.unobserve(host); continue; }
+      const w = host.clientWidth;
+      if (!w || Math.abs(w - d.w) < 3) continue;
+      hideTip();
+      d.fn(host, ...d.args);
+      d.w = host.clientWidth;
+    }
+  };
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(redrawChanged, 120); }) : null;
+  const tracked = fn => (host, ...args) => {
+    fn(host, ...args);
+    drawn.set(host, { fn, args, w: host.clientWidth });
+    if (observer) observer.observe(host);
+  };
+
+  return { barsH: tracked(barsH), barsV: tracked(barsV), donut: tracked(donut), columns: tracked(columns), gauge: tracked(gauge), colorMap, compact, hideTip, SLOTS, OTHER, tableMode: {} };
 })();

@@ -109,7 +109,7 @@ const WashingV2 = {
     // 3. Cycle time by jobber
     const jobs = [...new Set(jRows.map(r => r.jobber))].sort();
     Charts.barsH($('cCycle'), jobs.map(j => { const m = this.metrics(data, p, { ...f, jobber: j }); return { key: j, label: j, value: m.cycle || 0, color: jcolors[j] }; }),
-      { id: 'wash2-cycle', title: 'Average Cycle Time by Jobber', keyLabel: 'Jobber', valueLabel: 'Days', fmt: n2, selected: f.jobber ?? null, onClick: d => setFilter('jobber', d.key) });
+      { id: 'wash2-cycle', title: 'Average Cycle Time by Jobber', keyLabel: 'Jobber', valueLabel: 'Days', fmt: n2, valueText: d => n2(d.value), selected: f.jobber ?? null, onClick: d => setFilter('jobber', d.key) });
 
     // 4. Sent by floor
     const fRows = data.lots.filter(r => inP(r) && except('unit')(r));
