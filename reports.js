@@ -18,8 +18,12 @@ const MODULE_REPORTS = {
     { key: 'core', name: 'Core Fulfilment', def: () => OrderCore },
     { key: 'dispatch', name: 'DC Dispatch', def: () => OrderDispatch },
   ],
+  sales: [
+    { key: 'analysis', name: 'Sales Analysis', def: () => SalesReport },
+    { key: 'returns', name: 'Return Analysis', def: () => ReturnReport },
+  ],
 };
-const MODULE_NAMES = { production: 'Production', orders: 'Order Fulfilment' };
+const MODULE_NAMES = { production: 'Production', orders: 'Order Fulfilment', sales: 'Sales' };
 const REPNAV_KEY = 'mis.repnavOpen';
 const CMP_KEY = 'mis.compareWith';
 
@@ -226,7 +230,7 @@ async function ensureRaw(i) {
   const src = rp.def.detailSources[i];
   const c = rp.cache[`${rp.period.from}:${rp.period.to}`];
   c.raw = c.raw || {};
-  if (!c.raw[src.report]) c.raw[src.report] = await api(`/api/rows?${qs({ report: src.report, from: rp.period.from, to: rp.period.to })}`);
+  if (!c.raw[src.report]) c.raw[src.report] = src.fetch ? await src.fetch(rp.period) : await api(`/api/rows?${qs({ report: src.report, from: rp.period.from, to: rp.period.to })}`);
   return c.raw[src.report];
 }
 

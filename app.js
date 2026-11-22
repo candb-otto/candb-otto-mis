@@ -557,6 +557,7 @@ async function handleFile(file) {
   try {
     const X = await ensureXLSX();
     const wb = X.read(await file.arrayBuffer(), { type: 'array', cellNF: true, cellDates: false, raw: /\.csv$/i.test(file.name) });
+    if (await salesTryFile(X, wb, file)) return;
     await checkWorkbook(X, wb, file.name);
   } catch (err) {
     $('checkInfo').textContent = '';
