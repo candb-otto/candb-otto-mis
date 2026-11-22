@@ -10,7 +10,7 @@
 //   Season           = order-number prefix (text before the first "/") → Order Seasons; Type decides the report
 //   Core (CO / CE)   = no cut-off; DC qty is split into the Core Day Buckets (days from order date to DC date)
 //   RBK, IN (Type Exclude) are left out of fulfilment; DCs with no order number count for the stock point only.
-// Invoice % and on-time invoice % follow when the revised invoice file is ready.
+//   Invoice % / on-time invoice % = invoice lines from the sales file, matched on Order No + Section + Dept + Brand.
 // Uses helpers from reports.js / sewing.js (agg, rowsOf, cmpTile, chgHtml, achHtml, pctTxt, dayDiff, shiftP).
 
 const OKey = v => String(v ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -23,6 +23,14 @@ const pctFmt = v => (v == null ? '–' : Number(v).toFixed(1) + '%');
 
 // FY to date of the latest month with data (seasons span several months)
 const fyToDate = months => { const latest = months[0], fy = fyOf(latest); const from = fy.start < months.at(-1) ? months.at(-1) : fy.start; return { from, to: latest }; };
+
+// Reads a summary month by month, so a long period never hits the one-request row limit
+async function aggMonths(report, months, params) {
+  const out = [], queue = months.slice();
+  const work = async () => { while (queue.length) { const m = queue.shift(); const r = await agg({ report, from: m, to: m, ...params }); out.push(...r.rows); } };
+  await Promise.all([work(), work(), work(), work()]);
+  return out;
+}
 
 const ORD = {
   masters: null,
@@ -52,17 +60,17 @@ const ORD = {
   // Order lines placed in the period, with cancels and DCs (up to the latest data) linked to them
   async loadLines(p, keepType) {
     const M = await this.loadMasters();
-    const latest = [p.to, ...(rp.months || [])].sort().pop();
-    // A data set with nothing loaded yet counts as empty; any real read error is shown to the user.
-    const loaded = async r => (await api(`/api/months?report=${r}`)).months.length > 0;
-    const [hasCancel, hasDc] = await Promise.all([loaded('ord_cancel'), loaded('ord_dc')]);
-    const [so, cn, dc] = await Promise.all([
-      agg({ report: 'ord_so', from: p.from, to: p.to, by: ['SO No', 'Section', 'Dept', 'Brand', 'Site', 'date'], sum: ['Order Qty'] }),
-      hasCancel ? agg({ report: 'ord_cancel', from: p.from, to: latest, by: ['Order No', 'Section', 'Dept', 'Brand'], sum: ['Cancel Qty'] }) : { rows: [] },
-      hasDc ? agg({ report: 'ord_dc', from: p.from, to: latest, by: ['Order No', 'Section', 'Dept', 'Brand', 'date'], sum: ['DC Qty'] }) : { rows: [] },
+    const all = (await api('/api/months?report=sum_order_activity')).months.slice().sort();
+    const placed = all.filter(m => m >= p.from && m <= p.to), after = all.filter(m => m >= p.from);
+    const latest = after.length ? after[after.length - 1] : p.to;
+    const [so, cn, dc, iv] = await Promise.all([
+      aggMonths('sum_order_activity', placed, { source: 'Order', by: ['Order No', 'Section', 'Dept', 'Brand', 'Site', 'date'], sum: ['Qty'] }),
+      aggMonths('sum_order_activity', after, { source: 'Cancel', by: ['Order No', 'Section', 'Dept', 'Brand'], sum: ['Qty'] }),
+      aggMonths('sum_order_activity', after, { source: 'DC', by: ['Order No', 'Section', 'Dept', 'Brand', 'date'], sum: ['Qty'] }),
+      aggMonths('sum_order_activity', after, { source: 'Invoice', by: ['Order No', 'Section', 'Dept', 'Brand', 'date'], sum: ['Qty'] }),
     ]);
     const lines = new Map();
-    for (const [no, sec, dept, br, site, date, qty] of so.rows) {
+    for (const [no, sec, dept, br, site, date, qty] of so) {
       const s = this.seasonOf(no, M);
       if (!keepType(s.type)) continue;
       const k = lineKey(no, sec, dept, br);
@@ -71,29 +79,34 @@ const ORD = {
         const g = this.groupOf(sec, dept, br, M);
         lines.set(k, l = { no, prefix: s.prefix, season: s.name, type: s.type, cutoff: s.cutoff, sort: s.sort, unknown: !!s.unknown, date, month: date ? date.slice(0, 7) : '',
           site: site || '(none)', section: g.revSec, dept: g.revDept, brand: g.revBrand, merch: g.merch, wh: g.wh, rawSec: sec, rawDept: dept, rawBrand: br,
-          qty: 0, cancel: 0, dc: 0, onTime: 0, dcs: [] });
+          qty: 0, cancel: 0, dc: 0, onTime: 0, dcs: [], inv: 0, invOnTime: 0, invs: [] });
       }
       l.qty += qty || 0;
       if (date && date < l.date) { l.date = date; l.month = date.slice(0, 7); }
     }
-    for (const [no, sec, dept, br, q] of cn.rows) { const l = lines.get(lineKey(no, sec, dept, br)); if (l) l.cancel += q || 0; }
-    for (const [no, sec, dept, br, date, q] of dc.rows) {
-      const l = lines.get(lineKey(no, sec, dept, br));
-      if (!l || !q) continue;
-      l.dc += q;
-      if (l.cutoff && date && date <= l.cutoff) l.onTime += q;
-      l.dcs.push({ date, qty: q, days: date && l.date ? Math.max(0, dayDiff(l.date, date)) : null });
-    }
+    for (const [no, sec, dept, br, q] of cn) { const l = lines.get(lineKey(no, sec, dept, br)); if (l) l.cancel += q || 0; }
+    const link = (rows, total, onTime, list) => {
+      for (const [no, sec, dept, br, date, q] of rows) {
+        const l = lines.get(lineKey(no, sec, dept, br));
+        if (!l || !q) continue;
+        l[total] += q;
+        if (l.cutoff && date && date <= l.cutoff) l[onTime] += q;
+        l[list].push({ date, qty: q, days: date && l.date ? Math.max(0, dayDiff(l.date, date)) : null });
+      }
+    };
+    link(dc, 'dc', 'onTime', 'dcs');
+    link(iv, 'inv', 'invOnTime', 'invs');
     const out = [...lines.values()].map(l => ({ ...l, net: Math.max(0, l.qty - l.cancel), pending: Math.max(0, l.qty - l.cancel - l.dc) }));
     return { lines: out, M, latest, loadedTo: latest };
   },
 
   metrics(L) {
-    const qty = sum(L, r => r.qty), cancel = sum(L, r => r.cancel), net = sum(L, r => r.net), dc = sum(L, r => r.dc), pending = sum(L, r => r.pending);
+    const qty = sum(L, r => r.qty), cancel = sum(L, r => r.cancel), net = sum(L, r => r.net), dc = sum(L, r => r.dc), pending = sum(L, r => r.pending), inv = sum(L, r => r.inv);
     const withCut = L.filter(r => r.cutoff), netCut = sum(withCut, r => r.net);
     const dcDays = L.flatMap(r => r.dcs).filter(d => d.days != null);
-    return { qty, cancel, net, dc, pending, lines: L.length, orders: new Set(L.map(r => OKey(r.no))).size,
-      dcPct: pctOf(dc, net), onTime: sum(withCut, r => r.onTime), onTimePct: netCut ? sum(withCut, r => r.onTime) / netCut : null, netCut,
+    return { qty, cancel, net, dc, pending, inv, lines: L.length, orders: new Set(L.map(r => OKey(r.no))).size,
+      dcPct: pctOf(dc, net), invPct: pctOf(inv, net), onTime: sum(withCut, r => r.onTime), onTimePct: netCut ? sum(withCut, r => r.onTime) / netCut : null,
+      invOnTimePct: netCut ? sum(withCut, r => r.invOnTime) / netCut : null, netCut,
       avgDays: sum(dcDays, d => d.qty) ? sum(dcDays, d => d.days * d.qty) / sum(dcDays, d => d.qty) : null };
   },
   pass(r, f, skip) { return Object.entries(f).every(([d, v]) => v == null || d === skip || r[d] === v); },
@@ -123,14 +136,14 @@ const rpDimLabel = dim => (rp.def && rp.def.dims[dim]) || dim;
 
 // ---------------------------------------------------------------- Seasonal Fulfilment
 const OrderSeasonal = {
-  sources: ['ord_so', 'ord_dc', 'ord_cancel'],
+  sources: ['sum_orders_placed'],
   dims: { season: 'Season', brand: 'Brand', section: 'Section', dept: 'Dept', merch: 'Merchandiser', site: 'Site' },
   filterKey: 'season',
   defaultPeriod: fyToDate,
   noCompare: true,
   note: 'orders placed in this period; DCs up to the latest data',
   detailSources: [
-    { report: 'ord_so', title: 'Sales orders', map: { season: '_season', brand: '_brand', section: '_section', dept: '_dept', merch: '_merch', site: 'Site' }, view: r => OrderSeasonal.view(r) },
+    { report: 'ord_so', title: 'Sales orders', fetch: p => fetchSheetDetail('orders', 'SO', p), map: { season: '_season', brand: '_brand', section: '_section', dept: '_dept', merch: '_merch', site: 'Site' }, view: r => OrderSeasonal.view(r) },
   ],
   view: r => r,
 
@@ -164,7 +177,8 @@ const OrderSeasonal = {
       cmpTile('On-time DC %', achHtml(C.onTimePct), C.netCut < C.net ? `DC on or before the cut-off · ${n0(C.net - C.netCut)} pcs have no cut-off date` : 'DC on or before the season cut-off', []),
       cmpTile('Pending', n0(C.pending), C.net ? `${pctTxt(C.pending / C.net)} of net order` : '', []),
       cmpTile('Cut-off', cut, cutSub, []),
-      cmpTile('Invoice %', '–', 'Waiting for the revised invoice file', []),
+      cmpTile('Invoice %', achHtml(C.invPct), `${n0(C.inv)} pcs invoiced · invoice qty ÷ net order`, []),
+      cmpTile('On-time Invoice %', achHtml(C.invOnTimePct), 'Invoiced on or before the season cut-off', []),
     ].join('');
 
     $('repCharts').innerHTML = `<div class="chart-grid one">${chartBox('cSeason')}</div>
@@ -204,18 +218,18 @@ const OrderSeasonal = {
     const line = (name, m, cutoff, total, unknown) => {
       const dd = cutoff ? dayDiff(today, cutoff) : null;
       return `<tr class="${total ? 'total' : 'click'} ${f.season === name ? 'sel' : ''}" ${total ? '' : `data-k="${esc(name)}"`}><td>${esc(name)}${unknown ? ' <span class="note small">add it in Masters → Order Seasons</span>' : ''}</td>
-        <td>${cutoff ? esc(fmtYmd(cutoff)) : (total ? '' : '–')}</td>${td(n0(m.qty))}${td(n0(m.cancel))}${td(n0(m.net))}${td(n0(m.dc))}${td(achHtml(m.dcPct))}${td(achHtml(m.onTimePct))}${td(n0(m.pending))}
+        <td>${cutoff ? esc(fmtYmd(cutoff)) : (total ? '' : '–')}</td>${td(n0(m.qty))}${td(n0(m.cancel))}${td(n0(m.net))}${td(n0(m.dc))}${td(achHtml(m.dcPct))}${td(achHtml(m.onTimePct))}${td(n0(m.inv))}${td(achHtml(m.invPct))}${td(achHtml(m.invOnTimePct))}${td(n0(m.pending))}
         ${td(dd == null ? '' : dd > 0 ? `${dd} to go` : dd === 0 ? 'today' : `closed`)}</tr>`;
     };
     const rows = (f.season ? [f.season] : sKeys).map(s => { const sl = sL.filter(r => r.season === s); return line(s, ORD.metrics(sl), sl[0] && sl[0].cutoff, false, sl[0] && sl[0].unknown); });
     $('repSummary').innerHTML = `<div class="sum-head"><h2>Summary by Season – orders placed ${esc(periodLabel(ctx.period))}</h2><button class="btn primary" id="btnDetails" type="button">View Details</button></div>
       <div class="tbl-wrap"><table>
-        <thead><tr><th>Season</th><th>Cut-off</th><th class="num">Ordered</th><th class="num">Cancelled</th><th class="num">Net Order</th><th class="num">DC Qty</th><th class="num">DC %</th><th class="num">On-time DC %</th><th class="num">Pending</th><th class="num">Days</th></tr></thead>
-        <tbody>${rows.join('') || '<tr><td colspan="10" class="empty">No seasonal orders in this period.</td></tr>'}</tbody>
+        <thead><tr><th>Season</th><th>Cut-off</th><th class="num">Ordered</th><th class="num">Cancelled</th><th class="num">Net Order</th><th class="num">DC Qty</th><th class="num">DC %</th><th class="num">On-time DC %</th><th class="num">Invoice Qty</th><th class="num">Invoice %</th><th class="num">On-time Inv %</th><th class="num">Pending</th><th class="num">Days</th></tr></thead>
+        <tbody>${rows.join('') || '<tr><td colspan="13" class="empty">No seasonal orders in this period.</td></tr>'}</tbody>
         ${rows.length > 1 ? `<tfoot>${line('Total', ORD.metrics(sL.filter(r => ORD.pass(r, f))), null, true)}</tfoot>` : ''}
       </table></div>
       ${ORD.pendingTable(L, 'Pending order lines')}
-      <p class="note small foot-note">Orders placed in the chosen period; cancellations and DCs are counted up to ${esc(fmtMonth(data.latest))}. A DC is linked to its order by Order No + Section + Dept + Brand. On time = DC dated on or before the season cut-off (Masters → Order Seasons). RBK and IN orders are left out. Invoice % follows when the revised invoice file is ready.</p>`;
+      <p class="note small foot-note">Orders placed in the chosen period; cancellations and DCs are counted up to ${esc(fmtMonth(data.latest))}. A DC is linked to its order by Order No + Section + Dept + Brand. On time = DC dated on or before the season cut-off (Masters → Order Seasons). RBK and IN orders are left out. Invoice % uses the invoice lines from the sales file, matched the same way.</p>`;
     $('repSummary').querySelectorAll('tr[data-k]').forEach(tr => tr.onclick = () => setFilter('season', tr.dataset.k));
     $('btnDetails').onclick = () => openDetails(0);
   },
@@ -223,14 +237,14 @@ const OrderSeasonal = {
 
 // ---------------------------------------------------------------- Core Fulfilment
 const OrderCore = {
-  sources: ['ord_so', 'ord_dc', 'ord_cancel'],
+  sources: ['sum_orders_placed'],
   dims: { brand: 'Brand', section: 'Section', dept: 'Dept', merch: 'Merchandiser', site: 'Site', month: 'Order Month' },
   filterKey: 'brand',
   defaultPeriod: fyToDate,
   noCompare: true,
   note: 'Core orders (CO / CE) placed in this period; DCs up to the latest data',
   detailSources: [
-    { report: 'ord_so', title: 'Sales orders', map: { brand: '_brand', section: '_section', dept: '_dept', merch: '_merch', site: 'Site' }, view: r => OrderCore.view(r) },
+    { report: 'ord_so', title: 'Sales orders', fetch: p => fetchSheetDetail('orders', 'SO', p), map: { brand: '_brand', section: '_section', dept: '_dept', merch: '_merch', site: 'Site' }, view: r => OrderCore.view(r) },
   ],
   view: r => r,
 
@@ -241,9 +255,9 @@ const OrderCore = {
   },
   units(data) { return [...new Set(data.lines.map(r => r.brand))].sort(); },
 
-  buckets(L, M) {
+  buckets(L, M, list = 'dcs') {
     const out = Object.fromEntries(M.buckets.map(b => [b.label, 0]));
-    L.forEach(r => r.dcs.forEach(d => { if (d.days != null) out[ORD.bucketOf(d.days, M)] += d.qty; }));
+    L.forEach(r => r[list].forEach(d => { if (d.days != null) out[ORD.bucketOf(d.days, M)] += d.qty; }));
     return out;
   },
 
@@ -251,7 +265,7 @@ const OrderCore = {
     const f = ctx.filters, M = data.M;
     const L = data.lines.filter(r => ORD.pass(r, f));
     const C = ORD.metrics(L);
-    const B = this.buckets(L, M), first = M.buckets[0];
+    const B = this.buckets(L, M), BI = this.buckets(L, M, 'invs'), first = M.buckets[0];
     $('repTiles').classList.add('wide');
     $('repTiles').innerHTML = [
       cmpTile('Ordered', n0(C.qty), `${n0(C.orders)} orders · ${n0(C.lines)} order lines`, []),
@@ -262,11 +276,12 @@ const OrderCore = {
       cmpTile('Pending', n0(C.pending), C.net ? `${pctTxt(C.pending / C.net)} of net order` : '', []),
       cmpTile('Average Days to DC', C.avgDays == null ? '–' : n1(C.avgDays), 'Order date to DC date, weighted by qty', []),
       cmpTile(`DC within ${esc(first.label)}`, pctTxt(pctOf(B[first.label], C.dc)), `${n0(B[first.label])} of ${n0(C.dc)} pcs`, []),
-      cmpTile('Invoice %', '–', 'Waiting for the revised invoice file', []),
+      cmpTile('Invoice %', achHtml(C.invPct), `${n0(C.inv)} pcs invoiced · invoice qty ÷ net order`, []),
+      cmpTile(`Invoice within ${esc(first.label)}`, pctTxt(pctOf(BI[first.label], C.inv)), `${n0(BI[first.label])} of ${n0(C.inv)} pcs`, []),
     ].join('');
 
-    $('repCharts').innerHTML = `<div class="chart-grid">${chartBox('cBucket') + chartBox('cAge')}</div>
-      <div class="chart-grid one">${chartBox('cMonth')}</div>
+    $('repCharts').innerHTML = `<div class="chart-grid">${chartBox('cBucket') + chartBox('cInvBucket')}</div>
+      <div class="chart-grid">${chartBox('cAge') + chartBox('cMonth')}</div>
       <div class="chart-grid">${chartBox('cBrand') + chartBox('cSection')}</div>
       <div class="chart-grid one">${chartBox('cMerch')}</div>`;
 
@@ -274,6 +289,10 @@ const OrderCore = {
     Charts.barsV($('cBucket'), M.buckets.map(b => ({ key: b.label, label: b.label, short: b.label.replace(/\s*days?$/i, ''), value: B[b.label] })),
       { id: 'core-bucket', title: 'DC Qty by Days from Order', sub: 'Buckets from Masters → Core Day Buckets', keyLabel: 'Days', valueLabel: 'DC Qty', fmt: n0,
         tip: d => tipHtml(d.label, [['DC qty', n0(d.value)], ['Share of DC', pctTxt(pctOf(d.value, C.dc))]]) });
+
+    Charts.barsV($('cInvBucket'), M.buckets.map(b => ({ key: b.label, label: b.label, short: b.label.replace(/\s*days?$/i, ''), value: BI[b.label] })),
+      { id: 'core-inv-bucket', title: 'Invoice Qty by Days from Order', sub: 'Buckets from Masters → Core Day Buckets', keyLabel: 'Days', valueLabel: 'Invoice Qty', fmt: n0, color: 'var(--s2)',
+        tip: d => tipHtml(d.label, [['Invoice qty', n0(d.value)], ['Share of invoiced', pctTxt(pctOf(d.value, C.inv))]]) });
 
     // 2. Pending qty by age (today − order date)
     const age = Object.fromEntries(M.buckets.map(b => [b.label, 0]));
@@ -300,16 +319,16 @@ const OrderCore = {
     const brands = f.brand ? [f.brand] : [...new Set(bL.map(r => r.brand))].sort();
     const row = (name, LL, total) => {
       const m = ORD.metrics(LL), b = this.buckets(LL, M);
-      return `<tr class="${total ? 'total' : 'click'} ${f.brand === name ? 'sel' : ''}" ${total ? '' : `data-k="${esc(name)}"`}><td>${esc(name)}</td>${td(n0(m.qty))}${td(n0(m.net))}${td(n0(m.dc))}${td(achHtml(m.dcPct))}${td(n0(m.pending))}${td(m.avgDays == null ? '–' : n1(m.avgDays))}
+      return `<tr class="${total ? 'total' : 'click'} ${f.brand === name ? 'sel' : ''}" ${total ? '' : `data-k="${esc(name)}"`}><td>${esc(name)}</td>${td(n0(m.qty))}${td(n0(m.net))}${td(n0(m.dc))}${td(achHtml(m.dcPct))}${td(n0(m.inv))}${td(achHtml(m.invPct))}${td(n0(m.pending))}${td(m.avgDays == null ? '–' : n1(m.avgDays))}
         ${M.buckets.map(x => td(pctTxt(pctOf(b[x.label], m.dc)))).join('')}</tr>`;
     };
     $('repSummary').innerHTML = `<div class="sum-head"><h2>Summary by Brand – core orders placed ${esc(periodLabel(ctx.period))}</h2><button class="btn primary" id="btnDetails" type="button">View Details</button></div>
       <div class="tbl-wrap"><table>
-        <thead><tr><th>Brand</th><th class="num">Ordered</th><th class="num">Net Order</th><th class="num">DC Qty</th><th class="num">DC %</th><th class="num">Pending</th><th class="num">Avg Days</th>${M.buckets.map(b => `<th class="num">${esc(b.label)}</th>`).join('')}</tr></thead>
-        <tbody>${brands.map(b => row(b, bL.filter(r => r.brand === b))).join('') || `<tr><td colspan="${7 + M.buckets.length}" class="empty">No core orders in this period.</td></tr>`}</tbody>
+        <thead><tr><th>Brand</th><th class="num">Ordered</th><th class="num">Net Order</th><th class="num">DC Qty</th><th class="num">DC %</th><th class="num">Invoice Qty</th><th class="num">Invoice %</th><th class="num">Pending</th><th class="num">Avg Days</th>${M.buckets.map(b => `<th class="num">${esc(b.label)}</th>`).join('')}</tr></thead>
+        <tbody>${brands.map(b => row(b, bL.filter(r => r.brand === b))).join('') || `<tr><td colspan="${9 + M.buckets.length}" class="empty">No core orders in this period.</td></tr>`}</tbody>
         ${brands.length > 1 ? `<tfoot>${row('Total', bL, true)}</tfoot>` : ''}
       </table></div>
-      <p class="note small">Bucket columns = share of the DC qty delivered within those days of the order date.</p>
+      <p class="note small">Bucket columns = share of the DC qty delivered within those days of the order date. Invoice buckets are in the chart above.</p>
       ${ORD.pendingTable(L, 'Pending core order lines')}
       <p class="note small foot-note">Core orders = order prefixes with Type "Core" in Masters → Order Seasons (CO, CE). Orders placed in the chosen period; cancellations and DCs are counted up to ${esc(fmtMonth(data.latest))}. Day buckets come from Masters → Core Day Buckets and can be changed there.</p>`;
     $('repSummary').querySelectorAll('tr[data-k]').forEach(tr => tr.onclick = () => setFilter('brand', tr.dataset.k));
@@ -320,25 +339,26 @@ const OrderCore = {
 // ---------------------------------------------------------------- DC Dispatch (by DC date)
 const DC_KINDS = { order: 'Against orders', none: 'Without order no', excl: 'Returns / excluded (RBK, IN)' };
 const OrderDispatch = {
-  sources: ['ord_dc'],
+  sources: ['sum_dc_stock'],
   dims: { sp: 'Stock Point', wh: 'WH Head', kind: 'DC Type', section: 'Section', date: 'Date' },
   filterKey: 'sp',
   compareModes: true,
   noTarget: true,
   detailSources: [
-    { report: 'ord_dc', title: 'DC lines', map: { sp: 'Stock Point', wh: '_wh', kind: '_kind', section: '_section', date: 'DC Date' }, view: r => OrderDispatch.view(r) },
+    { report: 'ord_dc', title: 'DC lines', fetch: p => fetchSheetDetail('orders', 'DC', p), map: { sp: 'Stock Point', wh: '_wh', kind: '_kind', section: '_section', date: 'DC Date' }, view: r => OrderDispatch.view(r) },
   ],
   view: r => r,
 
   async load(p, c) {
     const from = [addMonths(p.from, -12), addMonths(p.to, -11), c.from].sort()[0];
     const M = await ORD.loadMasters();
-    const res = await agg({ report: 'ord_dc', from, to: p.to, by: ['date', 'Site', 'Stock Point', 'Order No', 'DC No', 'Section', 'Dept', 'Brand'], sum: ['DC Qty'] });
+    const have = (await api('/api/months?report=sum_dc_stock')).months.filter(m => m >= from && m <= p.to);
+    const res = await aggMonths('sum_dc_stock', have, { by: ['date', 'Site', 'Stock Point', 'Order Prefix', 'Section', 'Dept', 'Brand'], sum: ['Qty'] });
     const kindOf = no => { if (!no || !String(no).trim()) return DC_KINDS.none; const s = M.season[prefixOf(no)]; return s && s.type === 'Exclude' ? DC_KINDS.excl : DC_KINDS.order; };
     const spOf = (site, sp) => { const x = M.point[OKey(site) + '|' + OKey(sp)]; return { wh: (x && x['WH Head']) || '(not set)', measured: !!(x && x.Measure === 'Yes') }; };
-    const rows = res.rows.map(([date, site, sp, no, dcno, sec, dept, br, q]) => {
+    const rows = res.map(([date, site, sp, no, sec, dept, br, q]) => {
       const s = spOf(site, sp), g = ORD.groupOf(sec, dept, br, M);
-      return { date, month: date ? date.slice(0, 7) : '', site: site || '(none)', sp: sp || '(none)', wh: s.wh, measured: s.measured, kind: kindOf(no), dcno, section: g.revSec, qty: q || 0 };
+      return { date, month: date ? date.slice(0, 7) : '', site: site || '(none)', sp: sp || '(none)', wh: s.wh, measured: s.measured, kind: kindOf(no), section: g.revSec, qty: q || 0 };
     });
     this.view = r => { const s = spOf(r.Site, r['Stock Point']), g = ORD.groupOf(r.Section, r.Dept, r.Brand, M); return { ...r, _wh: s.wh, _kind: kindOf(r['Order No']), _section: g.revSec }; };
     return { rows, M, loadedFrom: from };
@@ -350,7 +370,7 @@ const OrderDispatch = {
     const by = k => sum(R.filter(r => r.kind === k), r => r.qty);
     const days = new Set(R.filter(r => r.qty > 0).map(r => r.date)).size;
     return { qty: sum(R, r => r.qty), order: by(DC_KINDS.order), none: by(DC_KINDS.none), excl: by(DC_KINDS.excl),
-      dcs: new Set(R.map(r => r.dcno)).size, days, perDay: days ? sum(R, r => r.qty) / days : null, points: new Set(R.map(r => r.sp)).size };
+      days, perDay: days ? sum(R, r => r.qty) / days : null, points: new Set(R.map(r => r.sp)).size };
   },
 
   draw(data, ctx) {
@@ -361,7 +381,7 @@ const OrderDispatch = {
     const cmp = (a, b) => [[`vs ${refLabel}`, chgHtml(a, b)]];
     $('repTiles').classList.add('wide');
     $('repTiles').innerHTML = [
-      cmpTile('DC Qty', n0(C.qty), `${n0(C.dcs)} DCs · ${n0(C.days)} days with DC`, cmp(C.qty, R.qty)),
+      cmpTile('DC Qty', n0(C.qty), `${n0(C.days)} days with DC`, cmp(C.qty, R.qty)),
       cmpTile('Against Orders', n0(C.order), C.qty ? `${pctTxt(C.order / C.qty)} of DC qty` : '', cmp(C.order, R.order)),
       cmpTile('Without Order No', n0(C.none), 'Menswear / Junior DCs with no order number', cmp(C.none, R.none)),
       cmpTile('Returns / Excluded', n0(C.excl), 'RBK and IN orders (not fulfilment)', cmp(C.excl, R.excl)),
@@ -406,15 +426,15 @@ const OrderDispatch = {
       const [site, sp] = key.split('|'), rr = spRows.filter(r => r.site === site && r.sp === sp), ref = data.rows.filter(r => r.month >= refR.from && r.month <= refR.to && r.site === site && r.sp === sp && except('sp')(r));
       const by = k => sum(rr.filter(r => r.kind === k), r => r.qty), q = sum(rr, r => r.qty);
       return { site, sp, wh: rr[0] ? rr[0].wh : '', measured: rr[0] && rr[0].measured, q, ref: sum(ref, r => r.qty), order: by(DC_KINDS.order), none: by(DC_KINDS.none), excl: by(DC_KINDS.excl),
-        dcs: new Set(rr.map(r => r.dcno)).size, days: new Set(rr.map(r => r.date)).size };
+        days: new Set(rr.map(r => r.date)).size };
     };
     const lines = pts.map(lineOf).sort((a, b) => b.q - a.q);
     $('repSummary').innerHTML = `<div class="sum-head"><h2>Summary by Stock Point – ${esc(periodLabel(p))}${f.date ? ' · ' + esc(fmtDay(f.date)) : ''}</h2><button class="btn primary" id="btnDetails" type="button">View Details</button></div>
       <div class="tbl-wrap"><table>
-        <thead><tr><th>Stock Point</th><th>Site</th><th>WH Head</th><th class="num">DCs</th><th class="num">Days</th><th class="num">Against Orders</th><th class="num">Without Order No</th><th class="num">Returns / Excl.</th><th class="num">Total DC Qty</th><th class="num">vs ${esc(refLabel)}</th></tr></thead>
+        <thead><tr><th>Stock Point</th><th>Site</th><th>WH Head</th><th class="num">Days</th><th class="num">Against Orders</th><th class="num">Without Order No</th><th class="num">Returns / Excl.</th><th class="num">Total DC Qty</th><th class="num">vs ${esc(refLabel)}</th></tr></thead>
         <tbody>${lines.map(l => `<tr class="click ${f.sp === l.sp ? 'sel' : ''}" data-k="${esc(l.sp)}"><td>${esc(l.sp)}${l.measured ? '' : ' <span class="note small">not measured</span>'}</td><td>${esc(l.site)}</td><td>${esc(l.wh)}</td>
-          ${td(n0(l.dcs))}${td(n0(l.days))}${td(n0(l.order))}${td(n0(l.none))}${td(n0(l.excl))}${td(n0(l.q))}${td(chgHtml(l.q, l.ref))}</tr>`).join('') || '<tr><td colspan="10" class="empty">No DCs in this period.</td></tr>'}</tbody>
-        ${lines.length > 1 ? `<tfoot><tr class="total"><td>Total</td><td></td><td></td>${td(n0(C.dcs))}${td(n0(C.days))}${td(n0(C.order))}${td(n0(C.none))}${td(n0(C.excl))}${td(n0(C.qty))}${td(chgHtml(C.qty, R.qty))}</tr></tfoot>` : ''}
+          ${td(n0(l.days))}${td(n0(l.order))}${td(n0(l.none))}${td(n0(l.excl))}${td(n0(l.q))}${td(chgHtml(l.q, l.ref))}</tr>`).join('') || '<tr><td colspan="9" class="empty">No DCs in this period.</td></tr>'}</tbody>
+        ${lines.length > 1 ? `<tfoot><tr class="total"><td>Total</td><td></td><td></td>${td(n0(C.days))}${td(n0(C.order))}${td(n0(C.none))}${td(n0(C.excl))}${td(n0(C.qty))}${td(chgHtml(C.qty, R.qty))}</tr></tfoot>` : ''}
       </table></div>
       <p class="note small foot-note">Menswear and Junior DCs only (raw material, scrap and other divisions are not loaded). Month is taken from the DC date. "Without order no" = DCs with a blank order number, the stock-point efficiency measure. RBK and IN orders (Type Exclude in Masters → Order Seasons) are shown separately. WH head and "measured" come from Masters → Stock Points.</p>`;
     $('repSummary').querySelectorAll('tr[data-k]').forEach(tr => tr.onclick = () => setFilter('sp', tr.dataset.k));

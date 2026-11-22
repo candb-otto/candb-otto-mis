@@ -54,7 +54,7 @@ function groupHtml(g) {
         <td><b>${esc(it.text)}</b></td><td>${esc(it.note)}</td><td>${esc(it.where)}</td>
         <td class="num">${fmtNum(it.rows)}</td><td class="num">${it.qty == null ? '' : fmtNum(it.qty)}</td>
         <td>${esc(umDate(it.first))}</td><td>${esc(umDate(it.last))}</td>
-        <td class="um-act"><button class="btn small" type="button" data-g="${g.key}" data-view="${g.items.indexOf(it)}">View rows</button>
+        <td class="um-act">${it.looks && it.looks.length ? `<button class="btn small" type="button" data-g="${g.key}" data-view="${g.items.indexOf(it)}">View rows</button>` : ''}
           <button class="btn small" type="button" data-g="${g.key}" data-add="${g.items.indexOf(it)}">Add to master</button></td></tr>
         <tr class="um-rows hidden" id="umv-${g.key}-${g.items.indexOf(it)}"><td colspan="8"></td></tr>`).join('')}</tbody>
     </table></div>

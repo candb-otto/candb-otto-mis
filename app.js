@@ -558,6 +558,7 @@ async function handleFile(file) {
     const X = await ensureXLSX();
     const wb = X.read(await file.arrayBuffer(), { type: 'array', cellNF: true, cellDates: false, raw: /\.csv$/i.test(file.name) });
     if (await salesTryFile(X, wb, file)) return;
+    if (await orderTryFile(X, wb, file)) return;
     await checkWorkbook(X, wb, file.name);
   } catch (err) {
     $('checkInfo').textContent = '';
@@ -776,40 +777,6 @@ function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
 window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', boot);
 
-// ---------- Google Sheet "MIS Orders" ----------
-// The Worker passes the sheet's values through; they are checked and uploaded exactly like a file.
-async function syncOrders() {
-  if (up.busy) return;
-  const btn = $('syncBtn'); btn.disabled = true; btn.textContent = 'Reading…';
-  say('');
-  try {
-    const info = await api('/api/orders/sheet');
-    if (!info.configured) throw new Error(info.message + ' Ask Claude to finish the set-up.');
-    const X = await ensureXLSX();
-    const wb = { SheetNames: [], Sheets: {} };
-    const wanted = up.config ? up.config.reports.filter(r => r.erp).map(r => r.sheet) : ['SO', 'Cancel', 'DC'];
-    for (const tab of info.tabs.filter(t => wanted.some(w => w.toLowerCase() === t.toLowerCase()))) {
-      const d = await api(`/api/orders/sheet?tab=${encodeURIComponent(tab)}`).catch(err => { throw new Error(`Tab ${tab}: ${err.message}`); });
-      const values = d.sheet && d.sheet.values;
-      if (!values || values.length < 2) continue;   // empty tab
-      wb.SheetNames.push(tab);
-      wb.Sheets[tab] = X.utils.aoa_to_sheet(values);
-    }
-    if (!wb.SheetNames.length) throw new Error('The tabs SO, Cancel and DC of the MIS Orders sheet are empty.');
-    up.file = { name: `Google Sheet: ${info.title}` };
-    up.sheets = [];
-    $('checkArea').classList.remove('hidden');
-    $('checkFile').textContent = up.file.name;
-    $('checkInfo').textContent = 'Checking…';
-    $('checkRows').innerHTML = '';
-    $('uploadBtn').disabled = true;
-    $('progress').classList.add('hidden');
-    await checkWorkbook(X, wb, up.file.name);
-    say('Sheet read. Check the result below, then press Upload.', 'ok');
-  } catch (err) { say(err.message, 'error'); }
-  finally { btn.disabled = false; btn.textContent = 'Sync now'; }
-}
-$('syncBtn').addEventListener('click', syncOrders);
 function fmtYmd(d) { if (!d) return ''; const [y, m, dd] = d.split('-').map(Number); return new Date(y, m - 1, dd).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }
 
 // ---------- monthly detail storage check ----------
