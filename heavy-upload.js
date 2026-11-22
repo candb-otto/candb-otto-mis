@@ -182,7 +182,7 @@ async function heavySave(cfg) {
       const swaps = temps.filter(t => t.month === month);
       if (!swaps.length) continue;
       try { await api('/api/detail/swap', { module: cfg.module, month, swaps }); }
-      catch { failed.push(fmtMonth(month)); }
+      catch (e) { failed.push(`${fmtMonth(month)} (${e.message})`); }
     }
     if (failed.length) throw new Error(`Reports are updated, but View Details for ${failed.join(', ')} could not be switched. Please upload the same file again.`);
     $('progress').classList.add('hidden');
