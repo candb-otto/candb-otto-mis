@@ -787,15 +787,33 @@ async function checkStorage() {
     const d = await api('/api/store/check', {});
     if (!d.configured) throw new Error(d.message);
     const ok = v => (v ? '<span class="pill good">Yes</span>' : '<span class="pill bad">No</span>');
-    box.innerHTML = `<div class="tbl-wrap store-table"><table><thead><tr><th>Folder</th><th class="num">Files</th><th>Can add</th><th>Can move out</th></tr></thead>
-      <tbody>${d.folders.map(f => `<tr><td>${esc(f.label)}</td><td class="num">${fmtNum(f.count)}</td><td>${ok(f.canAdd)}</td><td>${ok(f.canRemove)}</td></tr>`).join('')}</tbody></table></div>
-      ${d.sheets.length ? `<div class="tbl-wrap store-table"><table><thead><tr><th>Monthly sheet</th><th>Folder</th><th class="num">Tabs</th><th class="num">Cells used</th><th>Can edit</th></tr></thead>
-      <tbody>${d.sheets.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.folder)}</td><td class="num">${fmtNum(s.tabs)}</td><td class="num">${fmtNum(s.cells)} (${(s.pct * 100).toFixed(1)}%)${s.warn ? ' <span class="pill warn">Near limit</span>' : ''}</td><td>${ok(s.canEdit)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="note small">No monthly sheets yet. Create them in Active, named like Sales_2026_11 or Orders_2026_11.</p>'}
-      ${d.other.length ? `<p class="note small">Not used (name does not match): ${esc(d.other.join(', '))}</p>` : ''}
+    const pill = { Filling: 'good', Spare: 'muted', 'Nearly full': 'warn', Full: 'bad', Archived: 'muted' };
+    box.innerHTML = `${d.folders.length ? `<div class="tbl-wrap store-table"><table><thead><tr><th>Folder</th><th class="num">Files</th><th>Can add</th><th>Can move out</th></tr></thead>
+      <tbody>${d.folders.map(f => `<tr><td>${esc(f.label)}</td><td class="num">${fmtNum(f.count)}</td><td>${ok(f.canAdd)}</td><td>${ok(f.canRemove)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${d.sheets.length ? `<div class="tbl-wrap store-table"><table><thead><tr><th>File</th><th>Folder</th><th>Status</th><th>Months</th><th class="num">Cells used</th><th>Can edit</th></tr></thead>
+      <tbody>${d.sheets.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.folder)}</td><td><span class="pill ${pill[s.state]}">${esc(s.state)}</span></td><td>${s.months ? `${esc(fmtMonth(s.first))}${s.months > 1 ? ' – ' + esc(fmtMonth(s.last)) : ''} (${s.months})` : '–'}</td><td class="num">${fmtNum(s.cells)} (${(s.pct * 100).toFixed(1)}%)</td><td>${ok(s.canEdit)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${d.need.length ? `<p class="status error">Please create in MIS Data → Active: ${esc(d.need.join(', '))}</p>` : ''}
+      ${d.warn.length ? `<p class="status error">Nearly full. Please create a spare file: ${esc(d.warn.join(', '))}</p>` : ''}
+      ${d.old.length ? `<div class="store-move"><span>Old monthly sheets to move: <b>${esc(d.old.map(o => o.name).join(', '))}</b></span> <button class="btn primary" type="button" id="migrateBtn" ${d.need.length ? 'disabled' : ''}>Move to rolling files</button></div>` : ''}
+      ${d.other.filter(n => !d.old.some(o => o.name === n)).length ? `<p class="note small">Not used (name does not match): ${esc(d.other.filter(n => !d.old.some(o => o.name === n)).join(', '))}</p>` : ''}
       ${d.duplicates.length ? `<p class="status error">Same name in more than one place: ${esc(d.duplicates.join(', '))}</p>` : ''}`;
+    if ($('migrateBtn')) $('migrateBtn').onclick = moveOldSheets;
     say('Storage connection is working.', 'ok');
   } catch (err) { say(err.message, 'error'); }
   finally { btn.disabled = false; btn.textContent = 'Check storage'; }
+}
+
+// Copies old monthly sheets into the rolling files. The old sheets are left unchanged until Mari deletes them.
+async function moveOldSheets() {
+  if (!confirm('Copy the old monthly sheets into the rolling files? The old sheets are not changed.')) return;
+  const btn = $('migrateBtn'); btn.disabled = true; btn.textContent = 'Moving…';
+  try {
+    const d = await api('/api/store/migrate', {});
+    const parts = d.done.map(x => `${x.from} → ${x.to}`);
+    const bad = d.failed.map(x => `${x.name}: ${x.reason}`);
+    await checkStorage();
+    say((parts.length ? `Moved and checked: ${parts.join(', ')}. ` : '') + (bad.length ? `Could not move: ${bad.join('; ')}. The old sheet is still in use.` : parts.length ? 'You can now delete the old sheets.' : 'Nothing to move.'), bad.length ? 'error' : 'ok');
+  } catch (err) { say(err.message, 'error'); if ($('migrateBtn')) { $('migrateBtn').disabled = false; $('migrateBtn').textContent = 'Move to rolling files'; } }
 }
 $('storeBtn').addEventListener('click', checkStorage);
 
@@ -808,12 +826,11 @@ async function archiveOldSheets() {
     if (!d.configured) throw new Error(d.message);
     const parts = [];
     if (d.moved.length) parts.push(`Moved to Archive: ${d.moved.join(', ')}.`);
-    if (d.skipped.length) parts.push(`Already in Archive, left in Active: ${d.skipped.join(', ')}.`);
+    if (d.waiting.length) parts.push(`Full but waiting: ${d.waiting.join('; ')}.`);
     if (d.failed.length) parts.push(`Could not move: ${d.failed.map(f => `${f.name} (${f.reason})`).join('; ')}.`);
-    if (d.more) parts.push(`${d.more} more will move on the next run.`);
-    say(parts.join(' ') || `Nothing to move. Sheets from ${fmtMonth(d.cutoff)} onward stay in Active.`, d.failed.length || d.skipped.length ? 'error' : 'ok');
+    say(parts.join(' ') || 'Nothing to move. Files move to Archive only when they reach 8 million cells.', d.failed.length || d.waiting.length ? 'error' : 'ok');
     if ($('storeResult').innerHTML) await checkStorage();
   } catch (err) { say(err.message, 'error'); }
-  finally { btn.disabled = false; btn.textContent = 'Archive old sheets'; }
+  finally { btn.disabled = false; btn.textContent = 'Archive full files'; }
 }
 $('archiveBtn').addEventListener('click', archiveOldSheets);

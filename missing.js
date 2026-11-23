@@ -127,7 +127,7 @@ async function readSheetLooks(looks, onProgress) {
       if (m.stockPoint != null && !same(r['Stock Point'], m.stockPoint)) return false;
       return true;
     }).sort((a, b) => String(b[S.date]).localeCompare(String(a[S.date])));
-    out.push({ report: lk.report, label: S.label, sheet: `${S.module === 'sales' ? 'Sales' : 'Orders'} monthly, ${S.dataset}`, columns: raw.columns, total: rows.length, rows: rows.slice(0, 200), fromSheet: true, qty: rows.reduce((a, r) => a + (Number(r[S.qty]) || 0), 0) });
+    out.push({ report: lk.report, label: S.label, sheet: `${S.module === 'sales' ? 'Sales' : 'Orders'}_Data, ${S.dataset}`, columns: raw.columns, total: rows.length, rows: rows.slice(0, 200), fromSheet: true, qty: rows.reduce((a, r) => a + (Number(r[S.qty]) || 0), 0) });
   }
   return out;
 }

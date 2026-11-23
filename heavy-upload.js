@@ -105,8 +105,8 @@ function drawSalesCheck() {
   box.innerHTML = `<div class="card check-card">
     <div class="check-head"><div><b>${esc(p.fileName)}</b><div class="note small">${p.rowsRead ? `${fmtNum(p.rowsRead)} rows · ${esc(fmtYmd(p.dates[0] || ''))}${p.dates.length > 1 ? ' to ' + esc(fmtYmd(p.dates.at(-1))) : ''} · ${fmtNum(p.dates.length)} date${p.dates.length === 1 ? '' : 's'}` : ''}</div></div>
       <div class="check-actions"><button class="btn" type="button" id="salesClear">Choose another file</button><button class="btn primary" type="button" id="salesSave" ${ok ? '' : 'disabled'}>Upload</button></div></div>
-    ${p.rowsRead && p.months ? `<div class="tbl-wrap"><table><thead><tr><th>Data</th><th class="num">Qty</th><th class="num">Value</th><th class="num">Summary rows</th><th>Monthly sheet needed</th></tr></thead><tbody>
-      <tr><td>Sales</td><td class="num">${n0(p.sq)}</td><td class="num">₹${n0(p.sv)}</td><td class="num">${fmtNum(p.sumS.length)}</td><td rowspan="2">${p.months.map(m => esc(`Sales_${m.replace('-', '_')}`)).join(', ')}</td></tr>
+    ${p.rowsRead && p.months ? `<div class="tbl-wrap"><table><thead><tr><th>Data</th><th class="num">Qty</th><th class="num">Value</th><th class="num">Summary rows</th><th>Detail saved to</th></tr></thead><tbody>
+      <tr><td>Sales</td><td class="num">${n0(p.sq)}</td><td class="num">₹${n0(p.sv)}</td><td class="num">${fmtNum(p.sumS.length)}</td><td rowspan="2">Sales_Data file · ${p.months.map(m => esc(fmtMonth(m))).join(', ')}</td></tr>
       <tr><td>Returns</td><td class="num">${n0(p.rq)}</td><td class="num">₹${n0(p.rv)}</td><td class="num">${fmtNum(p.sumR.length)}</td></tr></tbody></table></div>` : ''}
     <p>${ok ? '<span class="pill good">Ready</span>' : '<span class="pill bad">Fix these in the file, then choose it again. Nothing was saved.</span>'}</p>
     ${p.errors.length || p.warnings.length ? `<ul class="msgs">${p.errors.map(e => li(e, 'err')).join('')}${p.warnings.map(e => li(e, 'warn')).join('')}</ul>` : ''}
@@ -177,17 +177,17 @@ async function heavySave(cfg) {
     }
     const fin = await api('/api/sum/finish', { uploadId, dates: cfg.dates, expected: Object.fromEntries(Object.entries(cfg.sums).map(([t, r]) => [t, r.length])) });
     committed = true;
-    const failed = [];
+    const failed = [], warns = [];
     for (const month of cfg.months) {
       const swaps = temps.filter(t => t.month === month);
       if (!swaps.length) continue;
-      try { await api('/api/detail/swap', { module: cfg.module, month, swaps }); }
+      try { const sw = await api('/api/detail/swap', { module: cfg.module, month, swaps }); if (sw.warn && !warns.includes(sw.warn)) warns.push(sw.warn); }
       catch (e) { failed.push(`${fmtMonth(month)} (${e.message})`); }
     }
     if (failed.length) throw new Error(`Reports are updated, but View Details for ${failed.join(', ')} could not be switched. Please upload the same file again.`);
     $('progress').classList.add('hidden');
     const arch = await api('/api/store/archive', {}).catch(() => null);
-    const archText = arch && arch.moved && arch.moved.length ? ` Moved to Archive: ${arch.moved.join(', ')}.` : '';
+    const archText = (arch && arch.moved && arch.moved.length ? ` Moved to Archive: ${arch.moved.join(', ')}.` : '') + (warns.length ? ' ' + warns.join(' ') : '');
     say(`Upload complete: ${fmtNum(cfg.rowsRead)} rows, ${fmtNum(fin.summaryRows)} summary rows saved.${archText}`, 'ok');
     SU.plan = null; $('heavyCheck').innerHTML = ''; $('fileInput').value = '';
     if (typeof rp !== 'undefined') rp.cache = {};
@@ -308,8 +308,8 @@ function drawOrderCheck() {
   box.innerHTML = `<div class="card check-card">
     <div class="check-head"><div><b>${esc(p.fileName)}</b><div class="note small">${esc(p.F.label)}${p.rowsRead ? ` · ${fmtNum(p.rowsRead)} rows` : ''}${p.dates.length ? ` · ${esc(fmtYmd(p.dates[0]))}${p.dates.length > 1 ? ' to ' + esc(fmtYmd(p.dates.at(-1))) : ''} · ${fmtNum(p.dates.length)} date${p.dates.length === 1 ? '' : 's'}` : ''}</div></div>
       <div class="check-actions"><button class="btn" type="button" id="orderClear">Choose another file</button><button class="btn primary" type="button" id="orderSave" ${ok ? '' : 'disabled'}>Upload</button></div></div>
-    ${p.saved ? `<div class="tbl-wrap"><table><thead><tr><th>Data</th><th class="num">Rows to save</th><th class="num">Qty</th><th class="num">Summary rows</th><th>Monthly sheet needed</th></tr></thead><tbody>
-      <tr><td>${esc(p.F.label)}</td><td class="num">${fmtNum(p.saved)}</td><td class="num">${n0(p.qty)}</td><td class="num">${fmtNum(Object.values(p.sums).reduce((a, r) => a + r.length, 0))}</td><td>${p.months.map(m => esc(`Orders_${m.replace('-', '_')}`)).join(', ')}</td></tr></tbody></table></div>` : ''}
+    ${p.saved ? `<div class="tbl-wrap"><table><thead><tr><th>Data</th><th class="num">Rows to save</th><th class="num">Qty</th><th class="num">Summary rows</th><th>Detail saved to</th></tr></thead><tbody>
+      <tr><td>${esc(p.F.label)}</td><td class="num">${fmtNum(p.saved)}</td><td class="num">${n0(p.qty)}</td><td class="num">${fmtNum(Object.values(p.sums).reduce((a, r) => a + r.length, 0))}</td><td>Orders_Data file · ${p.months.map(m => esc(fmtMonth(m))).join(', ')}</td></tr></tbody></table></div>` : ''}
     <p>${ok ? '<span class="pill good">Ready</span>' : empty ? '<span class="pill muted">No rows in this file: nothing to load</span>' : '<span class="pill bad">Fix these in the file, then choose it again. Nothing was saved.</span>'}</p>
     ${p.errors.length || p.warnings.length ? `<ul class="msgs">${p.errors.map(e => li(e, 'err')).join('')}${p.warnings.map(e => li(e, 'warn')).join('')}</ul>` : ''}
     ${left.length ? `<p class="note small">Left out (only Menswear and Junior DCs are kept): ${esc(left.map(([k, n]) => `${k} ${fmtNum(n)} rows`).join(', '))}</p>` : ''}

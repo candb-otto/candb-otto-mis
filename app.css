@@ -344,3 +344,5 @@ tr.um-rows > td { background: var(--panel, #fafaf7); padding: 8px 10px; }
 .store-table { margin-top: 8px; }
 
 .store-btns { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+
+.store-move { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--brand-soft); }
