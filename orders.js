@@ -64,20 +64,22 @@ const ORD = {
     const placed = all.filter(m => m >= p.from && m <= p.to), after = all.filter(m => m >= p.from);
     const latest = after.length ? after[after.length - 1] : p.to;
     const [so, cn, dc, iv] = await Promise.all([
-      aggMonths('sum_order_activity', placed, { source: 'Order', by: ['Order No', 'Section', 'Dept', 'Brand', 'Site', 'date'], sum: ['Qty'] }),
+      aggMonths('sum_order_activity', placed, { source: 'Order', by: ['Order No', 'Section', 'Dept', 'Brand', 'Site', 'date', 'Ref Order'], sum: ['Qty'] }),
       aggMonths('sum_order_activity', after, { source: 'Cancel', by: ['Order No', 'Section', 'Dept', 'Brand'], sum: ['Qty'] }),
       aggMonths('sum_order_activity', after, { source: 'DC', by: ['Order No', 'Section', 'Dept', 'Brand', 'date'], sum: ['Qty'] }),
       aggMonths('sum_order_activity', after, { source: 'Invoice', by: ['Order No', 'Section', 'Dept', 'Brand', 'date'], sum: ['Qty'] }),
     ]);
     const lines = new Map();
-    for (const [no, sec, dept, br, site, date, qty] of so) {
-      const s = this.seasonOf(no, M);
+    for (const [no, sec, dept, br, site, date, ref, qty] of so) {
+      // a transfer order (Type "Transfer", e.g. TRF) belongs to the season of the original order written in its remarks
+      const own = this.seasonOf(no, M);
+      const s = own.type === 'Transfer' ? (ref ? { ...this.seasonOf(ref, M), via: ref } : { ...own, name: `${own.prefix} (original order not found)`, type: 'Seasonal', unknown: true }) : own;
       if (!keepType(s.type)) continue;
       const k = lineKey(no, sec, dept, br);
       let l = lines.get(k);
       if (!l) {
         const g = this.groupOf(sec, dept, br, M);
-        lines.set(k, l = { no, prefix: s.prefix, season: s.name, type: s.type, cutoff: s.cutoff, sort: s.sort, unknown: !!s.unknown, date, month: date ? date.slice(0, 7) : '',
+        lines.set(k, l = { no, via: s.via || '', prefix: s.prefix, season: s.name, type: s.type, cutoff: s.cutoff, sort: s.sort, unknown: !!s.unknown, date, month: date ? date.slice(0, 7) : '',
           site: site || '(none)', section: g.revSec, dept: g.revDept, brand: g.revBrand, merch: g.merch, wh: g.wh, rawSec: sec, rawDept: dept, rawBrand: br,
           qty: 0, cancel: 0, dc: 0, onTime: 0, dcs: [], inv: 0, invOnTime: 0, invs: [] });
       }
@@ -127,7 +129,7 @@ const ORD = {
     return `<div class="sec-title">${esc(title)} <small>${P.length ? `largest ${P.length} of ${n0(L.filter(r => r.pending > 0).length)} order lines with pending qty` : ''}</small></div>
       <div class="tbl-wrap"><table>
         <thead><tr><th>SO No</th><th>Order Date</th><th>Season</th><th>Section</th><th>Dept</th><th>Brand</th><th>Merchandiser</th><th class="num">Net Order</th><th class="num">DC Qty</th><th class="num">Pending</th><th class="num">Days since order</th></tr></thead>
-        <tbody>${P.map(r => `<tr><td>${esc(r.no)}</td><td>${esc(r.date ? fmtYmd(r.date) : '')}</td><td>${esc(r.season)}</td><td>${esc(r.section)}</td><td>${esc(r.dept)}</td><td>${esc(r.brand)}</td><td>${esc(r.merch)}</td>
+        <tbody>${P.map(r => `<tr><td>${esc(r.no)}${r.via ? ` <span class="note small">for ${esc(r.via)}</span>` : ''}</td><td>${esc(r.date ? fmtYmd(r.date) : '')}</td><td>${esc(r.season)}</td><td>${esc(r.section)}</td><td>${esc(r.dept)}</td><td>${esc(r.brand)}</td><td>${esc(r.merch)}</td>
           ${td(n0(r.net))}${td(n0(r.dc))}${td(n0(r.pending))}${td(r.date ? n0(dayDiff(r.date, todayIso())) : '')}</tr>`).join('') || '<tr><td colspan="11" class="empty">Nothing pending.</td></tr>'}</tbody>
       </table></div>`;
   },

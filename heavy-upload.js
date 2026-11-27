@@ -236,8 +236,8 @@ async function salesSave() {
 // cols: [name in the app, ...names in the ERP file]; names are matched ignoring case, spaces, "-" and "_"
 const ORDER_FILES = {
   Order: { label: 'Sales Orders', dataset: 'SO', dateCol: 'Order Date', orderCol: 'SO No', qtyCol: 'Order Qty', detect: ['ordqty', 'orddt'],
-    cols: [['Site', 'SITENAME', 'SITE'], ['Division', 'DIV'], ['Section', 'SEC'], ['Dept', 'DEPT'], ['Brand', 'CAT5'], ['Order Date', 'ORDdt', 'ORD DATE'], ['SO No', 'SO_NO', 'ORD NO', 'ORDNO'], ['Order Qty', 'ORDqty', 'ORD QTY']],
-    key: ['SO No', 'Site', 'Section', 'Dept', 'Brand'], keyText: 'SO No + Site + Section + Dept + Brand' },
+    cols: [['Site', 'SITENAME', 'SITE'], ['Division', 'DIV'], ['Section', 'SEC'], ['Dept', 'DEPT'], ['Brand', 'CAT5'], ['Order Date', 'ORDdt', 'ORD DATE'], ['SO No', 'SO_NO', 'ORD NO', 'ORDNO'], ['Order Qty', 'ORDqty', 'ORD QTY'], ['Remarks', 'REM', 'REMARKS']],
+    optionalCols: ['Remarks'], key: ['SO No', 'Site', 'Section', 'Dept', 'Brand'], keyText: 'SO No + Site + Section + Dept + Brand' },
   Cancel: { label: 'Order Cancellations', dataset: 'Cancel', dateCol: 'Cancel Date', orderCol: 'Order No', qtyCol: 'Cancel Qty', detect: ['candate'],
     cols: [['Site', 'SITE', 'SITENAME'], ['Division', 'DIV'], ['Section', 'SEC'], ['Dept', 'DEPT'], ['Brand', 'CAT5'], ['Order No', 'ORD NO', 'ORDNO', 'SO_NO'], ['Cancel Date', 'CANDATE', 'CAN DATE'], ['Cancel Qty', 'CAN-QTY', 'CANQTY', 'CNLqty']],
     key: ['Order No', 'Site', 'Section', 'Dept', 'Brand', 'Cancel Date', 'Cancel Qty'], keyText: 'all columns' },
@@ -254,7 +254,9 @@ async function orderTryFile(X, wb, file) {
       const kind = Object.keys(ORDER_FILES).find(k => ORDER_FILES[k].detect.every(d => heads.includes(d)));
       if (!kind) continue;
       $('checkArea').classList.add('hidden');
-      SU.plan = orderCheck(X, ORDER_FILES[kind], kind, grid, hr, file.name);
+      // prefixes whose season comes from the original order written in the remarks (Type "Transfer" in Order Seasons)
+      const transfer = kind === 'Order' ? (await api('/api/masters/rows?key=ms_order_seasons')).rows.filter(r => r.Type === 'Transfer').map(r => String(r['Order Prefix'] || '').trim().toUpperCase()) : [];
+      SU.plan = orderCheck(X, ORDER_FILES[kind], kind, grid, hr, file.name, transfer);
       drawOrderCheck();
       return true;
     }
@@ -262,7 +264,8 @@ async function orderTryFile(X, wb, file) {
   return false;
 }
 
-function orderCheck(X, F, kind, grid, hr, fileName) {
+const ORDER_IN_TEXT = /\b([A-Z][A-Z0-9-]{0,7})\/[A-Z0-9]+\/\d+\/\d+\b/i;
+function orderCheck(X, F, kind, grid, hr, fileName, transfer = []) {
   const heads = (grid[hr] || []).map(h => String(h ?? '').trim()), at = {};
   const names = F.cols.map(c => c[0]);
   const errors = new Map(), warnings = new Map();
@@ -270,20 +273,21 @@ function orderCheck(X, F, kind, grid, hr, fileName) {
   const used = new Set();
   for (const [app, ...alts] of F.cols) {
     const hit = heads.findIndex(h => [app, ...alts].some(a => erpNorm(a) === erpNorm(h)));
-    if (hit < 0) note(errors, `Column "${alts[0]}" is missing. If the ERP renamed it, tell Claude the new name.`); else { at[app] = hit; used.add(hit); }
+    if (hit < 0) { if (!(F.optionalCols || []).includes(app)) note(errors, `Column "${alts[0]}" is missing. If the ERP renamed it, tell Claude the new name.`); }
+    else { at[app] = hit; used.add(hit); }
   }
   const base = { kind, F, fileName, rowsRead: 0, errors: [], warnings: [], dates: [], months: [] };
   if (errors.size) return { ...base, errors: [...errors.values()] };
   const extra = heads.filter((h, i) => h && !used.has(i));
   const today = todayIso(), seen = new Set(), detail = { [F.dataset]: {} }, act = new Map(), stock = new Map(), dates = new Set(), left = {};
-  let qty = 0, saved = 0;
-  const reqCols = names.filter(n => n !== F.qtyCol && !(F.orderOptional && n === F.orderCol));
+  let qty = 0, saved = 0, linked = 0;
+  const reqCols = names.filter(n => n !== F.qtyCol && !(F.orderOptional && n === F.orderCol) && !(F.optionalCols || []).includes(n));
   const addSum = (m, key, dims, q) => { const x = m.get(key); if (x) x[x.length - 1] += q; else m.set(key, [...dims, q]); };
   for (let r = hr + 1; r < grid.length; r++) {
     const line = grid[r] || [], excelRow = r + 1;
     if (line.every(v => v == null || String(v).trim() === '')) continue;
     base.rowsRead++;
-    const row = names.map(n => { const v = line[at[n]]; return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : v ?? ''; });
+    const row = names.map(n => { const v = at[n] == null ? '' : line[at[n]]; return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : v ?? ''; });
     const get = n => row[names.indexOf(n)];
     if (F.keepDivisions && !F.keepDivisions.includes(String(get('Division')).toUpperCase())) { const v = get('Division') || '(blank)'; left[v] = (left[v] || 0) + 1; continue; }
     let bad = false;
@@ -304,7 +308,13 @@ function orderCheck(X, F, kind, grid, hr, fileName) {
     (detail[F.dataset][month] = detail[F.dataset][month] || []).push(row);
     if (no) {
       const dims = [d, month, kind, no, get('Section'), get('Dept'), get('Brand'), get('Site')];
-      addSum(act, [d, no, get('Section'), get('Dept'), get('Brand')].map(OKey).join('|'), dims, q);
+      const k = [d, no, get('Section'), get('Dept'), get('Brand')].map(OKey).join('|');
+      addSum(act, k, dims, q);
+      if (kind === 'Order' && transfer.includes(prefixOf(no))) {
+        const m = String(get('Remarks') || '').match(ORDER_IN_TEXT);
+        if (m) { act.get(k)[9] = m[0].toUpperCase(); linked++; }
+        else note(warnings, 'Transfer order with no original order number in the remarks (shown under "original order not found")', excelRow);
+      }
     } else note(warnings, 'No order number (counted for the stock point only)', excelRow);
     if (kind === 'DC') {
       const dims = [d, month, get('Site'), get('Stock Point'), prefixOf(no), get('Section'), get('Dept'), get('Brand')];
@@ -312,7 +322,7 @@ function orderCheck(X, F, kind, grid, hr, fileName) {
     }
   }
   const list = [...dates].sort();
-  return { ...base, cols: names, dateAt: names.indexOf(F.dateCol), dates: list, months: [...new Set(list.map(x => x.slice(0, 7)))], detail, qty, saved, left, extra,
+  return { ...base, cols: names, dateAt: names.indexOf(F.dateCol), dates: list, months: [...new Set(list.map(x => x.slice(0, 7)))], detail, qty, saved, left, extra, linked,
     sums: kind === 'DC' ? { sum_order_activity: [...act.values()], sum_dc_stock: [...stock.values()] } : { sum_order_activity: [...act.values()] },
     errors: [...errors.values()], warnings: [...warnings.values()] };
 }
@@ -330,6 +340,7 @@ function drawOrderCheck() {
       <tr><td>${esc(p.F.label)}</td><td class="num">${fmtNum(p.saved)}</td><td class="num">${n0(p.qty)}</td><td class="num">${fmtNum(Object.values(p.sums).reduce((a, r) => a + r.length, 0))}</td><td>Orders_Data file · ${p.months.map(m => esc(fmtMonth(m))).join(', ')}</td></tr></tbody></table></div>` : ''}
     <p>${ok ? '<span class="pill good">Ready</span>' : empty ? '<span class="pill muted">No rows in this file: nothing to load</span>' : '<span class="pill bad">Fix these in the file, then choose it again. Nothing was saved.</span>'}</p>
     ${p.errors.length || p.warnings.length ? `<ul class="msgs">${p.errors.map(e => li(e, 'err')).join('')}${p.warnings.map(e => li(e, 'warn')).join('')}</ul>` : ''}
+    ${p.linked ? `<p class="note small">Transfer orders linked to their original order's season: ${fmtNum(p.linked)}</p>` : ''}
     ${left.length ? `<p class="note small">Left out (only Menswear and Junior DCs are kept): ${esc(left.map(([k, n]) => `${k} ${fmtNum(n)} rows`).join(', '))}</p>` : ''}
     ${p.extra && p.extra.length ? `<p class="note small">Not stored: ${esc(p.extra.join(', '))}</p>` : ''}
     <p class="note small">Only the dates in this file are replaced for ${esc(p.F.label)}. Other dates and other data stay as they are.</p></div>`;
