@@ -2,15 +2,21 @@
 // The browser reads the file, checks headers, field types, dates and required details, then builds daily summaries.
 // Summaries go to D1; detail rows go to the month's Google Sheet (Sales_2026_11). Only the dates in the file are replaced.
 
-const SALES_COLS = ['Source Site', 'Customer Name', 'Destination Site', 'Destination State', 'Destination City', 'Agent Name', 'Invoice Type', 'DIVISION', 'SECTION', 'DEPARTMENT',
-  'Category5', 'Standard Rate', 'WSP', 'Invoice Rate', 'Invoice Date', 'Invoice No', 'SO', 'Invoice Qty', 'Invoice Gross Amt', 'Remarks'];
-const SALES_REQUIRED = ['Source Site', 'Customer Name', 'Destination State', 'Invoice Type', 'DIVISION', 'SECTION', 'DEPARTMENT', 'Category5', 'Invoice Date', 'Invoice No'];
-const SALES_NUMBERS = ['Standard Rate', 'WSP', 'Invoice Rate', 'Invoice Qty', 'Invoice Gross Amt'];
-const SALES_DATE_AT = SALES_COLS.indexOf('Invoice Date');
+const SALES_COLS = ['SITE_NAME', 'AGENT_NAME', 'CUSTOMER_NAME', 'DEST_NAME', 'BILLING_CITY', 'INVOICE_NO', 'INVOICE_DATE', 'SO_NUM', 'DC_NUM', 'INVOICE_TYPE',
+  'DIVISION', 'SECTION', 'DEPARTMENT', 'BRAND', 'INVOICE_QTY', 'GROSS_AMT', 'STATE', 'REMARKS'];
+const SALES_REQUIRED = ['SITE_NAME', 'CUSTOMER_NAME', 'INVOICE_NO', 'INVOICE_DATE', 'INVOICE_TYPE', 'DIVISION', 'SECTION', 'DEPARTMENT', 'STATE'];
+const SALES_NUMBERS = ['INVOICE_QTY', 'GROSS_AMT'];
+const SALES_DATE_AT = SALES_COLS.indexOf('INVOICE_DATE');
+const SALES_LEFT_OUT = ['RAW MATERIAL'];   // kept in the detail Sheet, not counted in reports (Mari, 27-11-2026)
+// Column names of the first sales layout (20-21 Nov 2026) → names in the revised layout; old detail rows are moved across by these
+const SALES_ALIAS = { 'Source Site': 'SITE_NAME', 'Agent Name': 'AGENT_NAME', 'Customer Name': 'CUSTOMER_NAME', 'Destination Site': 'DEST_NAME', 'Destination City': 'BILLING_CITY',
+  'Invoice No': 'INVOICE_NO', 'Invoice Date': 'INVOICE_DATE', SO: 'SO_NUM', 'Invoice Type': 'INVOICE_TYPE', Category5: 'BRAND', 'Invoice Qty': 'INVOICE_QTY',
+  'Invoice Gross Amt': 'GROSS_AMT', 'Destination State': 'STATE', Remarks: 'REMARKS' };
+const salesRow = r => { for (const [o, n] of Object.entries(SALES_ALIAS)) if ((r[n] == null || r[n] === '') && r[o] != null) r[n] = r[o]; return r; };
 const SU = { plan: null };
 
 function salesHeaderRow(grid) {
-  const need = ['invoiceno', 'invoicedate', 'invoiceqty', 'invoicegrossamt'];
+  const need = ['invoiceno', 'invoicedate', 'invoiceqty'];
   for (let r = 0; r < Math.min(6, grid.length); r++) {
     const heads = (grid[r] || []).map(erpNorm);
     if (need.every(n => heads.includes(n))) return r;
@@ -45,7 +51,7 @@ function salesCheck(X, f, fileName, states) {
   if (missing.length) { missing.forEach(c => note(errors, `Column "${c}" is missing. If the ERP renamed it, tell Claude the new name.`)); return { fileName, errors: [...errors.values()], warnings: [] }; }
   const extra = heads.filter(h => h && !SALES_COLS.some(c => erpNorm(c) === erpNorm(h)));
   const stateMap = Object.fromEntries(states.map(s => [OKey(s['State Name in Data']), s.State]));
-  const today = todayIso(), seen = new Map(), detail = { Sales: {}, Returns: {} }, sumS = new Map(), sumR = new Map(), sumI = new Map(), dates = new Set();
+  const today = todayIso(), seen = new Map(), detail = { Sales: {}, Returns: {} }, sumS = new Map(), sumR = new Map(), sumI = new Map(), dates = new Set(), left = {};
   let rowsRead = 0, sq = 0, sv = 0, rq = 0, rv = 0;
   const add = (m, key, base, q, v) => { const x = m.get(key); if (x) { x[x.length - 2] += q; x[x.length - 1] += v; } else m.set(key, [...base, q, v]); };
 
@@ -55,46 +61,50 @@ function salesCheck(X, f, fileName, states) {
     rowsRead++;
     const row = SALES_COLS.map(c => { const v = line[at[erpNorm(c)]]; return typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : v ?? ''; });
     const get = c => row[SALES_COLS.indexOf(c)];
+    const division = String(get('DIVISION')).toUpperCase(), leftOut = SALES_LEFT_OUT.includes(division);
     let bad = false;
     for (const c of SALES_REQUIRED) if (get(c) === '') { note(errors, `"${c}" is blank`, excelRow); bad = true; }
+    if (!leftOut && get('BRAND') === '') { note(errors, '"BRAND" is blank', excelRow); bad = true; }
     for (const c of SALES_NUMBERS) {
       const raw = get(c), n = typeof raw === 'number' ? raw : Number(String(raw).replace(/,/g, ''));
       if (raw === '' || !isFinite(n)) { note(errors, `"${c}" is not a number`, excelRow); bad = true; } else row[SALES_COLS.indexOf(c)] = n;
     }
-    const d = erpDate(get('Invoice Date'), X);
-    if (!d) { if (get('Invoice Date') !== '') note(errors, '"Invoice Date" is not a valid date', excelRow); bad = true; }
-    else if (d > today) { note(errors, '"Invoice Date" is in the future', excelRow); bad = true; }
+    const d = erpDate(get('INVOICE_DATE'), X);
+    if (!d) { if (get('INVOICE_DATE') !== '') note(errors, '"INVOICE_DATE" is not a valid date', excelRow); bad = true; }
+    else if (d > today) { note(errors, '"INVOICE_DATE" is in the future', excelRow); bad = true; }
     else row[SALES_DATE_AT] = d;
-    const type = String(get('Invoice Type')).toUpperCase();
+    const type = String(get('INVOICE_TYPE')).toUpperCase();
     const kind = type === 'SALES' ? 'Sales' : /RETURN|SRTN|CREDIT/.test(type) ? 'Returns' : null;
-    if (type && !kind) { note(errors, `Invoice Type "${get('Invoice Type')}" is not known as sales or return`, excelRow); bad = true; }
+    if (type && !kind) { note(errors, `INVOICE_TYPE "${get('INVOICE_TYPE')}" is not known as sales or return`, excelRow); bad = true; }
     if (bad) continue;
-    const qty = Number(get('Invoice Qty')), amt = Number(get('Invoice Gross Amt'));
-    if (kind === 'Sales' && qty <= 0) { note(errors, 'Sales line with zero or negative "Invoice Qty"', excelRow); continue; }
-    if (Math.abs(Math.abs(qty) * Number(get('Invoice Rate')) - Math.abs(amt)) > 1) note(warnings, 'Qty × Invoice Rate does not equal Gross Amt', excelRow);
-    if (get('SO') === '') note(warnings, 'No order number (kept in Sales, left out of Order Fulfilment)', excelRow);
-    const key = ['Source Site', 'Invoice No', 'SO', 'SECTION', 'DEPARTMENT', 'Category5', 'Invoice Rate', 'Invoice Type'].map(c => OKey(get(c))).join('|');
-    if (seen.has(key)) { note(errors, 'Same line twice (Invoice No + SO + Section + Dept + Brand + Rate)', excelRow); continue; }
+    const qty = Number(get('INVOICE_QTY')), amt = Number(get('GROSS_AMT'));
+    if (kind === 'Sales' && qty <= 0) { note(errors, 'Sales line with zero or negative "INVOICE_QTY"', excelRow); continue; }
+    if (kind === 'Returns' && qty > 0) note(warnings, 'Return line with a positive qty (counted as a return)', excelRow);
+    const key = ['SITE_NAME', 'INVOICE_NO', 'SO_NUM', 'DC_NUM', 'SECTION', 'DEPARTMENT', 'BRAND', 'INVOICE_TYPE'].map(c => OKey(get(c))).join('|');
+    if (seen.has(key)) { note(errors, 'Same line twice (Invoice No + SO + DC + Section + Dept + Brand)', excelRow); continue; }
     seen.set(key, excelRow);
-    const state = stateMap[OKey(get('Destination State'))];
-    if (!state) note(warnings, `State "${get('Destination State')}" is not in Masters → States`, excelRow);
-    const month = d.slice(0, 7), prefix = prefixOf(get('SO')) || '(none)', q = Math.abs(qty), v = Math.abs(amt);
-    const dims = [d, month, get('Source Site'), get('DIVISION'), get('SECTION'), get('DEPARTMENT'), get('Category5'), prefix, state || String(get('Destination State'))];
+    const month = d.slice(0, 7);
     dates.add(d);
     (detail[kind][month] = detail[kind][month] || []).push(row);
+    if (leftOut) { const k = `${division} ${kind === 'Sales' ? 'sales' : 'returns'}`; left[k] = left[k] || { n: 0, q: 0, v: 0 }; left[k].n++; left[k].q += Math.abs(qty); left[k].v += Math.abs(amt); continue; }
+    if (kind === 'Sales' && get('SO_NUM') === '') note(warnings, 'No order number (kept in Sales, left out of Order Fulfilment)', excelRow);
+    const state = stateMap[OKey(get('STATE'))];
+    if (!state) note(warnings, `State "${get('STATE')}" is not in Masters → States`, excelRow);
+    const prefix = prefixOf(get('SO_NUM')) || '(none)', q = Math.abs(qty), v = Math.abs(amt);
+    const dims = [d, month, get('SITE_NAME'), get('DIVISION'), get('SECTION'), get('DEPARTMENT'), get('BRAND'), prefix, state || String(get('STATE'))];
     if (kind === 'Sales') {
       sq += q; sv += v; add(sumS, dims.map(OKey).join('|'), dims, q, v);
-      if (get('SO') !== '') {   // invoice qty for Order Fulfilment
-        const k = [d, get('SO'), get('SECTION'), get('DEPARTMENT'), get('Category5')].map(OKey).join('|'), x = sumI.get(k);
-        if (x) x[8] += q; else sumI.set(k, [d, month, 'Invoice', String(get('SO')), get('SECTION'), get('DEPARTMENT'), get('Category5'), get('Source Site'), q]);
+      if (get('SO_NUM') !== '') {   // invoice qty for Order Fulfilment
+        const k = [d, get('SO_NUM'), get('SECTION'), get('DEPARTMENT'), get('BRAND')].map(OKey).join('|'), x = sumI.get(k);
+        if (x) x[8] += q; else sumI.set(k, [d, month, 'Invoice', String(get('SO_NUM')), get('SECTION'), get('DEPARTMENT'), get('BRAND'), get('SITE_NAME'), q]);
       }
     }
-    else { rq += q; rv += v; const dr = [...dims, String(get('Invoice Type'))]; add(sumR, dr.map(OKey).join('|'), dr, q, v); }
+    else { rq += q; rv += v; const dr = [...dims, String(get('INVOICE_TYPE'))]; add(sumR, dr.map(OKey).join('|'), dr, q, v); }
   }
   if (!rowsRead) note(errors, 'No data rows found.');
   const list = [...dates].sort();
   const months = [...new Set(list.map(d => d.slice(0, 7)))];
-  return { fileName, sheet: f.name, rowsRead, dates: list, months, detail, sumS: [...sumS.values()], sumR: [...sumR.values()], sumI: [...sumI.values()], sq, sv, rq, rv, extra,
+  return { fileName, sheet: f.name, rowsRead, dates: list, months, detail, sumS: [...sumS.values()], sumR: [...sumR.values()], sumI: [...sumI.values()], sq, sv, rq, rv, extra, left,
     errors: [...errors.values()], warnings: [...warnings.values()] };
 }
 
@@ -110,6 +120,7 @@ function drawSalesCheck() {
       <tr><td>Returns</td><td class="num">${n0(p.rq)}</td><td class="num">₹${n0(p.rv)}</td><td class="num">${fmtNum(p.sumR.length)}</td></tr></tbody></table></div>` : ''}
     <p>${ok ? '<span class="pill good">Ready</span>' : '<span class="pill bad">Fix these in the file, then choose it again. Nothing was saved.</span>'}</p>
     ${p.errors.length || p.warnings.length ? `<ul class="msgs">${p.errors.map(e => li(e, 'err')).join('')}${p.warnings.map(e => li(e, 'warn')).join('')}</ul>` : ''}
+    ${p.left && Object.keys(p.left).length ? `<p class="note small">Kept in the detail Sheet but not counted in reports: ${esc(Object.entries(p.left).map(([k, x]) => `${k} ${fmtNum(x.n)} lines, ${n0(x.q)} qty, ₹${n0(x.v)}`).join('; '))}</p>` : ''}
     ${p.extra && p.extra.length ? `<p class="note small">Not stored: ${esc(p.extra.join(', '))}</p>` : ''}
     <p class="note small">Only the dates in this file are replaced. Other dates stay as they are.</p></div>`;
   $('salesClear').onclick = () => { if (up.busy) return; SU.plan = null; box.innerHTML = ''; $('fileInput').value = ''; $('fileInput').click(); };
@@ -157,12 +168,19 @@ async function heavySave(cfg) {
     for (const month of cfg.months) for (const dataset of cfg.sets) {
       progress(0, 1, `Reading ${dataset} ${fmtMonth(month)}…`);
       const old = await readDetailTab(cfg.module, month, dataset);
-      if (old.length && (old[0].length < cfg.cols.length || cfg.cols.some((c, i) => String(old[0][i]) !== c))) throw new Error(`The tab "${dataset}" in the ${fmtMonth(month)} sheet has different column names. Nothing was changed.`);
-      const keep = old.slice(1).filter(r => !fileDates.has(String(r[cfg.dateAt]).slice(0, 10)));
+      const oldHead = old.length ? old[0].map(h => String(h ?? '')) : [];
+      const asNew = name => erpNorm((cfg.alias && cfg.alias[name]) || name);
+      const src = cfg.cols.map(c => oldHead.findIndex(h => asNew(h) === erpNorm(c)));
+      const extras = oldHead.map((h, i) => ({ h, i })).filter(x => x.h && !src.includes(x.i));
+      const header = [...cfg.cols, ...extras.map(x => x.h)];
+      if (old.length && src[cfg.dateAt] < 0) throw new Error(`The tab "${dataset}" in the ${fmtMonth(month)} sheet has different column names. Nothing was changed.`);
+      if (header.length > 26) throw new Error(`The tab "${dataset}" in the ${fmtMonth(month)} sheet would have more than 26 columns. Please tell Claude.`);
+      const keep = old.slice(1).filter(r => !fileDates.has(String(r[src[cfg.dateAt]]).slice(0, 10)))
+        .map(r => [...src.map(i => (i < 0 ? '' : r[i] ?? '')), ...extras.map(x => r[x.i] ?? '')]);
       const fresh = (cfg.detail[dataset] || {})[month] || [];
       if (!old.length && !fresh.length) continue;
-      const all = [cfg.cols, ...keep, ...fresh], want = keep.length + fresh.length;
-      const b = await api('/api/detail/begin', { module: cfg.module, month, dataset, rows: want, cols: cfg.cols.length, uploadId });
+      const all = [header, ...keep, ...fresh], want = keep.length + fresh.length;
+      const b = await api('/api/detail/begin', { module: cfg.module, month, dataset, rows: want, cols: header.length, uploadId });
       const t = { month, dataset, tab: b.tab, rows: want };
       temps.push(t);
       let done = 0;
@@ -211,7 +229,7 @@ async function salesSave() {
   const p = SU.plan;
   if (!p || p.errors.length) return;
   return heavySave({ module: 'sales', kind: 'sales', fileName: p.fileName, rowsRead: p.rowsRead, dates: p.dates, months: p.months, sets: ['Sales', 'Returns'], detail: p.detail,
-    cols: SALES_COLS, dateAt: SALES_DATE_AT, sums: { sum_sales: p.sumS, sum_returns: p.sumR, sum_order_activity: p.sumI }, saveBtn: 'salesSave', clearBtn: 'salesClear' });
+    cols: SALES_COLS, alias: SALES_ALIAS, dateAt: SALES_DATE_AT, sums: { sum_sales: p.sumS, sum_returns: p.sumR, sum_order_activity: p.sumI }, saveBtn: 'salesSave', clearBtn: 'salesClear' });
 }
 
 // ---------- Order files: SO, Cancel, DC ----------

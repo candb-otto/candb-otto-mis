@@ -8,8 +8,8 @@ const makeSalesReport = ({ table, dataset, word }) => {
     filterKey: 'brand',
     compareModes: true,
     noTarget: true,
-    detailSources: [{ report: table, title: `${word} lines`, fetch: p => fetchSheetDetail('sales', dataset, p),
-      map: { brand: '_brand', section: '_section', dept: '_dept', state: '_state', season: '_season', site: 'Source Site', date: 'Invoice Date', type: 'Invoice Type' }, view: r => def.view(r) }],
+    detailSources: [{ report: table, title: `${word} lines`, fetch: async p => { const d = await fetchSheetDetail('sales', dataset, p); d.rows.forEach(salesRow); d.columns = d.columns.map(c => SALES_ALIAS[c] && !d.columns.includes(SALES_ALIAS[c]) ? SALES_ALIAS[c] : c); return d; },
+      map: { brand: '_brand', section: '_section', dept: '_dept', state: '_state', season: '_season', site: 'SITE_NAME', date: '_date', type: 'INVOICE_TYPE', division: 'DIVISION' }, view: r => def.view(r) }],
     view: r => r,
 
     async load(p, c) {
@@ -24,7 +24,7 @@ const makeSalesReport = ({ table, dataset, word }) => {
         const g = ORD.groupOf(r[2], r[3], r[4], M);
         return { date: r[0], month: r[0].slice(0, 7), site: r[1], section: g.revSec, dept: g.revDept, brand: g.revBrand, state: r[5], season: seasonName(r[6]), type: isRet ? r[7] : '', qty: r[n] || 0, value: r[n + 1] || 0 };
       });
-      def.view = r => { const g = ORD.groupOf(r.SECTION, r.DEPARTMENT, r.Category5, M); return { ...r, _brand: g.revBrand, _section: g.revSec, _dept: g.revDept, _state: stateOf[OKey(r['Destination State'])] || r['Destination State'], _season: seasonName(prefixOf(r.SO)) }; };
+      def.view = r => { r = salesRow(r); const g = ORD.groupOf(r.SECTION, r.DEPARTMENT, r.BRAND, M); return { ...r, _brand: g.revBrand, _section: g.revSec, _dept: g.revDept, _state: stateOf[OKey(r.STATE)] || r.STATE, _season: seasonName(prefixOf(r.SO_NUM)), _date: String(r.INVOICE_DATE || '').slice(0, 10) }; };
       return { rows, fy };
     },
     units(data) { return [...new Set(data.rows.map(r => r.brand))].sort(); },
@@ -76,7 +76,7 @@ const makeSalesReport = ({ table, dataset, word }) => {
         <div class="tbl-wrap"><table><thead><tr><th>Brand</th><th class="num">Qty</th><th class="num">Value</th><th class="num">vs ${esc(refLabel)}</th><th class="num">Average Rate</th><th class="num">Days</th></tr></thead>
         <tbody>${brands.map(b => line(b, def.metrics(data, p, { ...noBrand, brand: b }), def.metrics(data, refR, { ...noBrand, brand: b }))).join('') || `<tr><td colspan="6" class="empty">No ${word.toLowerCase()} in this period.</td></tr>`}</tbody>
         ${brands.length > 1 ? `<tfoot>${line('Total', def.metrics(data, p, noBrand), def.metrics(data, refR, noBrand), true)}</tfoot>` : ''}</table></div>
-        <p class="note small foot-note">Value is Invoice Gross Amount. Brand, Section and Dept follow Masters → Item Groups. Season follows the order-number prefix. View Details reads the monthly Google Sheet, so it takes longer than the report.</p>`;
+        <p class="note small foot-note">Value is the invoice gross amount. Raw material lines are kept in View Details but not counted in this report. Brand, Section and Dept follow Masters → Item Groups. Season follows the order-number prefix. View Details reads the monthly Google Sheet, so it takes longer than the report.</p>`;
       $('repSummary').querySelectorAll('tr[data-k]').forEach(tr => tr.onclick = () => setFilter('brand', tr.dataset.k));
       $('btnDetails').onclick = () => openDetails(0);
     },

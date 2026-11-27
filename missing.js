@@ -108,7 +108,7 @@ const UM_SHEET = {
   ord_order: { module: 'orders', dataset: 'SO', label: 'Sales Orders', order: 'SO No', date: 'Order Date', qty: 'Order Qty', section: 'Section', dept: 'Dept', brand: 'Brand', site: 'Site' },
   ord_cancel: { module: 'orders', dataset: 'Cancel', label: 'Order Cancellations', order: 'Order No', date: 'Cancel Date', qty: 'Cancel Qty', section: 'Section', dept: 'Dept', brand: 'Brand', site: 'Site' },
   ord_dc: { module: 'orders', dataset: 'DC', label: 'DC', order: 'Order No', date: 'DC Date', qty: 'DC Qty', section: 'Section', dept: 'Dept', brand: 'Brand', site: 'Site' },
-  ord_invoice: { module: 'sales', dataset: 'Sales', label: 'Invoices', order: 'SO', date: 'Invoice Date', qty: 'Invoice Qty', section: 'SECTION', dept: 'DEPARTMENT', brand: 'Category5', site: 'Source Site' },
+  ord_invoice: { module: 'sales', dataset: 'Sales', label: 'Invoices', order: 'SO_NUM', date: 'INVOICE_DATE', qty: 'INVOICE_QTY', section: 'SECTION', dept: 'DEPARTMENT', brand: 'BRAND', site: 'SITE_NAME' },
 };
 async function readSheetLooks(looks, onProgress) {
   const out = [];
@@ -116,6 +116,7 @@ async function readSheetLooks(looks, onProgress) {
     const S = UM_SHEET[lk.report], m = lk.match || {};
     if (!S) continue;
     const raw = await fetchSheetDetail(S.module, S.dataset, { from: lk.from.slice(0, 7), to: lk.to.slice(0, 7) }, onProgress);
+    if (S.module === 'sales') raw.rows.forEach(salesRow);
     const same = (a, b) => OKey(a) === OKey(b);
     const rows = raw.rows.filter(r => {
       const d = String(r[S.date] || '').slice(0, 10);
